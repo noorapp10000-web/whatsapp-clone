@@ -3,109 +3,98 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'auth_service.dart';
 
-typedef MessageHandler = void Function(Map<String, dynamic> message);
-
 class WebSocketService {
-  static const String _wsBaseUrl = 'wss://d544ccf9-9d94-4f47-8a3e-a2b8370cf984-00-rqrek6rd6068.janeway.replit.dev/ws';
+  // ⚠️ This URL is replaced automatically by GitHub Actions CI/CD
+  // using the BACKEND_WS_URL secret. Do not change this placeholder.
+  static const String _wsBase = 'wss://YOUR_REPLIT_BACKEND_URL/ws';
 
   static WebSocketChannel? _channel;
-  static StreamSubscription? _subscription;
-  static final Map<String, List<MessageHandler>> _handlers = {};
+  static StreamController<Map<String, dynamic>>? _controller;
+  static bool _connected = false;
   static Timer? _reconnectTimer;
-  static bool _shouldReconnect = true;
+
+  static Stream<Map<String, dynamic>>? get stream => _controller?.stream;
+  static bool get isConnected => _connected;
 
   static Future<void> connect() async {
+    if (_connected) return;
+
     final token = await AuthService.getIdToken();
     if (token == null) return;
 
-    _shouldReconnect = true;
-    _doConnect(token);
-  }
+    _controller ??= StreamController<Map<String, dynamic>>.broadcast();
 
-  static void _doConnect(String token) {
     try {
-      _channel = WebSocketChannel.connect(
-        Uri.parse('$_wsBaseUrl?token=$token'),
-      );
+      final uri = Uri.parse('$_wsBase?token=${Uri.encodeComponent(token)}');
+      _channel = WebSocketChannel.connect(uri);
+      _connected = true;
 
-      _subscription = _channel!.stream.listen(
+      _channel!.stream.listen(
         (data) {
           try {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
-            final type = msg['type'] as String?;
-            if (type != null && _handlers.containsKey(type)) {
-              for (final handler in _handlers[type]!) {
-                handler(msg);
-              }
-            }
+            _controller?.add(msg);
           } catch (_) {}
         },
-        onDone: _onDisconnect,
-        onError: (_) => _onDisconnect(),
+        onError: (e) {
+          _connected = false;
+          _scheduleReconnect();
+        },
+        onDone: () {
+          _connected = false;
+          _scheduleReconnect();
+        },
       );
-    } catch (_) {
+    } catch (e) {
+      _connected = false;
       _scheduleReconnect();
     }
   }
 
-  static void _onDisconnect() {
-    if (_shouldReconnect) _scheduleReconnect();
+  static void send(Map<String, dynamic> data) {
+    if (_connected && _channel != null) {
+      _channel!.sink.add(jsonEncode(data));
+    }
   }
 
   static void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () async {
-      final token = await AuthService.getIdToken();
-      if (token != null) _doConnect(token);
-    });
-  }
-
-  static void on(String type, MessageHandler handler) {
-    _handlers.putIfAbsent(type, () => []).add(handler);
-  }
-
-  static void off(String type, MessageHandler handler) {
-    _handlers[type]?.remove(handler);
-  }
-
-  static void send(Map<String, dynamic> message) {
-    _channel?.sink.add(jsonEncode(message));
-  }
-
-  // ─── Typed senders ────────────────────────────────────────────────────────
-  static void sendTyping(int conversationId, int toUserId) {
-    send({'type': 'typing', 'conversationId': conversationId, 'toUserId': toUserId});
-  }
-
-  static void sendCallOffer(int toUserId, Map<String, dynamic> sdp) {
-    send({'type': 'call-offer', 'toUserId': toUserId, 'sdp': sdp});
-  }
-
-  static void sendCallAnswer(int toUserId, Map<String, dynamic> sdp) {
-    send({'type': 'call-answer', 'toUserId': toUserId, 'sdp': sdp});
-  }
-
-  static void sendIceCandidate(int toUserId, Map<String, dynamic> candidate) {
-    send({'type': 'call-ice', 'toUserId': toUserId, 'candidate': candidate});
-  }
-
-  static void sendCallReject(int toUserId) {
-    send({'type': 'call-reject', 'toUserId': toUserId});
-  }
-
-  static void sendCallEnd(int toUserId) {
-    send({'type': 'call-end', 'toUserId': toUserId});
-  }
-
-  static void sendScreenShareOffer(int toUserId, Map<String, dynamic> sdp) {
-    send({'type': 'screen-share-offer', 'toUserId': toUserId, 'sdp': sdp});
+    _reconnectTimer = Timer(const Duration(seconds: 5), connect);
   }
 
   static void disconnect() {
-    _shouldReconnect = false;
     _reconnectTimer?.cancel();
-    _subscription?.cancel();
     _channel?.sink.close();
     _channel = null;
+    _connected = false;
+  }
+
+  // ─── Typed senders ────────────────────────────────────────────────────────
+  static void sendTyping(int conversationId) {
+    send({'type': 'typing', 'conversationId': conversationId});
+  }
+
+  static void markRead(int messageId, int conversationId) {
+    send({'type': 'message_read', 'messageId': messageId, 'conversationId': conversationId});
+  }
+
+  static void sendCallOffer(int targetUserId, Map<String, dynamic> sdp) {
+    send({'type': 'call_offer', 'targetUserId': targetUserId, 'sdp': sdp});
+  }
+
+  static void sendCallAnswer(int targetUserId, Map<String, dynamic> sdp) {
+    send({'type': 'call_answer', 'targetUserId': targetUserId, 'sdp': sdp});
+  }
+
+  static void sendIceCandidate(int targetUserId, Map<String, dynamic> candidate) {
+    send({'type': 'call_ice', 'targetUserId': targetUserId, 'candidate': candidate});
+  }
+
+  static void endCall(int targetUserId) {
+    send({'type': 'call_end', 'targetUserId': targetUserId});
+  }
+
+  static void rejectCall(int targetUserId) {
+    send({'type': 'call_reject', 'targetUserId': targetUserId});
   }
 }

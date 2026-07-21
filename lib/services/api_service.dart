@@ -1,10 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
 class ApiService {
-  // Replace with your Replit backend URL after deployment
-  static const String baseUrl = 'https://d544ccf9-9d94-4f47-8a3e-a2b8370cf984-00-rqrek6rd6068.janeway.replit.dev/api';
+  // ⚠️ This URL is replaced automatically by GitHub Actions CI/CD
+  // using the BACKEND_URL secret. Do not change this placeholder.
+  static const String baseUrl = 'https://YOUR_REPLIT_BACKEND_URL/api';
 
   static Future<Map<String, String>> _headers() async {
     final token = await AuthService.getIdToken();
@@ -49,6 +51,10 @@ class ApiService {
   }
 
   static dynamic _handle(http.Response res) {
+    if (res.body.isEmpty) {
+      if (res.statusCode >= 200 && res.statusCode < 300) return {};
+      throw Exception('Request failed: ${res.statusCode}');
+    }
     final body = jsonDecode(res.body);
     if (res.statusCode >= 200 && res.statusCode < 300) return body;
     throw Exception(body['error'] ?? 'Request failed: ${res.statusCode}');
@@ -71,17 +77,15 @@ class ApiService {
 
   // ─── Users ────────────────────────────────────────────────────────────────
   static Future<Map<String, dynamic>> getMe() => get('/users/me');
-  static Future<Map<String, dynamic>> searchUsers(String q) =>
-      get('/users/search?q=$q');
-  static Future<Map<String, dynamic>> getContacts() => get('/contacts');
-  static Future<Map<String, dynamic>> addContact(int contactUserId) =>
+  static Future<dynamic> searchUsers(String q) => get('/users/search?q=${Uri.encodeComponent(q)}');
+  static Future<dynamic> getContacts() => get('/contacts');
+  static Future<dynamic> addContact(int contactUserId) =>
       post('/contacts', {'contactUserId': contactUserId});
 
   // ─── Conversations ────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> getConversations() =>
-      get('/conversations');
+  static Future<dynamic> getConversations() => get('/conversations');
 
-  static Future<Map<String, dynamic>> createConversation({
+  static Future<dynamic> createConversation({
     required String type,
     required List<int> participantIds,
     String? name,
@@ -93,11 +97,10 @@ class ApiService {
       });
 
   // ─── Messages ─────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> getMessages(int conversationId,
-          {String? before}) =>
-      get('/conversations/$conversationId/messages${before != null ? '?before=$before' : ''}');
+  static Future<dynamic> getMessages(int conversationId, {String? before}) =>
+      get('/conversations/$conversationId/messages${before != null ? '?before=${Uri.encodeComponent(before)}' : ''}');
 
-  static Future<Map<String, dynamic>> sendMessage(
+  static Future<dynamic> sendMessage(
     int conversationId, {
     String type = 'text',
     String? content,
@@ -117,36 +120,16 @@ class ApiService {
         if (replyToId != null) 'replyToId': replyToId,
       });
 
-  static Future<dynamic> deleteMessage(int messageId) =>
-      delete('/messages/$messageId');
-
   // ─── Upload ───────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> uploadFile({
-    required String base64,
-    String? mimeType,
-    String? fileName,
-  }) =>
-      post('/upload', {
-        'base64': base64,
-        if (mimeType != null) 'mimeType': mimeType,
-        if (fileName != null) 'fileName': fileName,
-      });
-
-  // ─── Calls ────────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> initiateCall({
-    required int receiverId,
-    required String type,
-    int? conversationId,
-  }) =>
-      post('/calls/initiate', {
-        'receiverId': receiverId,
-        'type': type,
-        if (conversationId != null) 'conversationId': conversationId,
-      });
-
-  static Future<Map<String, dynamic>> updateCallStatus(
-          int callId, String status) =>
-      put('/calls/$callId/status', {'status': status});
-
-  static Future<Map<String, dynamic>> getCallHistory() => get('/calls/history');
+  static Future<Map<String, dynamic>> uploadFile(File file, String mimeType) async {
+    final token = await AuthService.getIdToken();
+    final uri = Uri.parse('$baseUrl/upload');
+    final request = http.MultipartRequest('POST', uri);
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.files.add(await http.MultipartFile.fromPath('file', file.path,
+        filename: file.path.split('/').last));
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    return _handle(res);
+  }
 }

@@ -1,0 +1,15 @@
+{
+  "name": "@agent-workspace/workspace",
+  "version": "1.0.0",
+  "description": "A full-featured WhatsApp clone built with Flutter + Node.js backend.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
