@@ -9,21 +9,17 @@ build/
 *.g.dart
 *.freezed.dart
 
-# Android - sensitive files
-**/android/**/gradle-wrapper.jar
+# Android - sensitive/generated files (keep gradle wrapper & google-services in repo)
 **/android/.gradle
 **/android/captures/
-**/android/gradlew
-**/android/gradlew.bat
 **/android/local.properties
 **/android/**/GeneratedPluginRegistrant.java
 **/android/key.properties
 **/*.keystore
 **/*.jks
 
-# Firebase - DO NOT COMMIT
-**/google-services.json
-**/GoogleService-Info.plist
+# Firebase config is committed intentionally (non-secret, needed for CI build)
+# **/google-services.json   ← intentionally NOT ignored
 
 # Misc
 *.log
