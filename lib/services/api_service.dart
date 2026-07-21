@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
@@ -52,22 +51,22 @@ class ApiService {
 
   static dynamic _handle(http.Response res) {
     if (res.body.isEmpty) {
-      if (res.statusCode >= 200 && res.statusCode < 300) return {};
+      if (res.statusCode >= 200 && res.statusCode < 300) return <String, dynamic>{};
       throw Exception('Request failed: ${res.statusCode}');
     }
     final body = jsonDecode(res.body);
     if (res.statusCode >= 200 && res.statusCode < 300) return body;
-    throw Exception(body['error'] ?? 'Request failed: ${res.statusCode}');
+    throw Exception((body is Map ? body['error'] : null) ?? 'Request failed: ${res.statusCode}');
   }
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> login({
+  static Future<dynamic> login({
     required String displayName,
     required String email,
     String? photoUrl,
     String? fcmToken,
   }) async {
-    return await post('/auth/login', {
+    return post('/auth/login', {
       'displayName': displayName,
       'email': email,
       if (photoUrl != null) 'photoUrl': photoUrl,
@@ -76,8 +75,9 @@ class ApiService {
   }
 
   // ─── Users ────────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> getMe() => get('/users/me');
-  static Future<dynamic> searchUsers(String q) => get('/users/search?q=${Uri.encodeComponent(q)}');
+  static Future<dynamic> getMe() => get('/users/me');
+  static Future<dynamic> searchUsers(String q) =>
+      get('/users/search?q=${Uri.encodeComponent(q)}');
   static Future<dynamic> getContacts() => get('/contacts');
   static Future<dynamic> addContact(int contactUserId) =>
       post('/contacts', {'contactUserId': contactUserId});
@@ -120,16 +120,51 @@ class ApiService {
         if (replyToId != null) 'replyToId': replyToId,
       });
 
-  // ─── Upload ───────────────────────────────────────────────────────────────
-  static Future<Map<String, dynamic>> uploadFile(File file, String mimeType) async {
-    final token = await AuthService.getIdToken();
-    final uri = Uri.parse('$baseUrl/upload');
-    final request = http.MultipartRequest('POST', uri);
-    if (token != null) request.headers['Authorization'] = 'Bearer $token';
-    request.files.add(await http.MultipartFile.fromPath('file', file.path,
-        filename: file.path.split('/').last));
-    final streamed = await request.send();
-    final res = await http.Response.fromStream(streamed);
-    return _handle(res);
-  }
+  static Future<dynamic> deleteMessage(int conversationId, int messageId) =>
+      delete('/conversations/$conversationId/messages/$messageId');
+
+  // ─── File Upload (base64) ─────────────────────────────────────────────────
+  /// Uploads a base64-encoded file through the backend to Cloudinary.
+  /// [base64] should be a data URI: `data:<mimeType>;base64,<data>`.
+  static Future<dynamic> uploadFile({
+    required String base64,
+    required String mimeType,
+    required String fileName,
+  }) =>
+      post('/upload/base64', {
+        'base64': base64,
+        'mimeType': mimeType,
+        'fileName': fileName,
+      });
+
+  // ─── Calls ────────────────────────────────────────────────────────────────
+  static Future<dynamic> initiateCall({
+    required int receiverId,
+    required String type,
+    int? conversationId,
+  }) =>
+      post('/calls', {
+        'receiverId': receiverId,
+        'type': type,
+        if (conversationId != null) 'conversationId': conversationId,
+      });
+
+  static Future<dynamic> updateCallStatus(int callId, String status) =>
+      put('/calls/$callId', {'status': status});
+
+  static Future<dynamic> getCallHistory() => get('/calls');
+
+  // ─── Profile ──────────────────────────────────────────────────────────────
+  static Future<dynamic> updateProfile({
+    String? displayName,
+    String? status,
+    String? photoUrl,
+    String? fcmToken,
+  }) =>
+      put('/users/me', {
+        if (displayName != null) 'displayName': displayName,
+        if (status != null) 'status': status,
+        if (photoUrl != null) 'photoUrl': photoUrl,
+        if (fcmToken != null) 'fcmToken': fcmToken,
+      });
 }

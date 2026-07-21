@@ -13,8 +13,35 @@ class WebSocketService {
   static bool _connected = false;
   static Timer? _reconnectTimer;
 
-  static Stream<Map<String, dynamic>>? get stream => _controller?.stream;
+  // Event listeners map: event-type → list of callbacks
+  static final Map<String, List<Function(Map<String, dynamic>)>> _listeners =
+      {};
+
   static bool get isConnected => _connected;
+
+  /// Register a callback for a specific WebSocket event type.
+  static void on(String event, Function(Map<String, dynamic>) callback) {
+    _listeners.putIfAbsent(event, () => []).add(callback);
+  }
+
+  /// Remove a specific callback for an event type.
+  static void off(String event, Function(Map<String, dynamic>) callback) {
+    _listeners[event]?.remove(callback);
+  }
+
+  static void _dispatch(Map<String, dynamic> msg) {
+    final type = msg['type'] as String?;
+    if (type == null) return;
+    // Normalise underscore vs hyphen (server uses underscores, screens may use hyphens)
+    final normalised = type.replaceAll('_', '-');
+    for (final key in [type, normalised]) {
+      final callbacks = List<Function(Map<String, dynamic>)>.from(
+          _listeners[key] ?? []);
+      for (final cb in callbacks) {
+        cb(msg);
+      }
+    }
+  }
 
   static Future<void> connect() async {
     if (_connected) return;
@@ -34,6 +61,7 @@ class WebSocketService {
           try {
             final msg = jsonDecode(data as String) as Map<String, dynamic>;
             _controller?.add(msg);
+            _dispatch(msg);
           } catch (_) {}
         },
         onError: (e) {
@@ -67,15 +95,20 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _connected = false;
+    _listeners.clear();
   }
 
   // ─── Typed senders ────────────────────────────────────────────────────────
-  static void sendTyping(int conversationId) {
+  static void sendTyping(int conversationId, [int? targetUserId]) {
     send({'type': 'typing', 'conversationId': conversationId});
   }
 
   static void markRead(int messageId, int conversationId) {
-    send({'type': 'message_read', 'messageId': messageId, 'conversationId': conversationId});
+    send({
+      'type': 'message_read',
+      'messageId': messageId,
+      'conversationId': conversationId
+    });
   }
 
   static void sendCallOffer(int targetUserId, Map<String, dynamic> sdp) {
@@ -87,14 +120,34 @@ class WebSocketService {
   }
 
   static void sendIceCandidate(int targetUserId, Map<String, dynamic> candidate) {
-    send({'type': 'call_ice', 'targetUserId': targetUserId, 'candidate': candidate});
+    send({
+      'type': 'call_ice',
+      'targetUserId': targetUserId,
+      'candidate': candidate
+    });
   }
 
-  static void endCall(int targetUserId) {
+  static void sendCallEnd(int targetUserId) {
     send({'type': 'call_end', 'targetUserId': targetUserId});
   }
 
-  static void rejectCall(int targetUserId) {
+  /// Alias for [sendCallEnd] — kept for backwards compatibility.
+  static void endCall(int targetUserId) => sendCallEnd(targetUserId);
+
+  static void sendCallReject(int targetUserId) {
     send({'type': 'call_reject', 'targetUserId': targetUserId});
+  }
+
+  /// Alias for [sendCallReject] — kept for backwards compatibility.
+  static void rejectCall(int targetUserId) => sendCallReject(targetUserId);
+
+  static void sendScreenShareOffer(
+      int targetUserId, Map<String, dynamic> data) {
+    send({
+      'type': 'call_offer',
+      'targetUserId': targetUserId,
+      'sdp': data,
+      'isScreenShare': true,
+    });
   }
 }
