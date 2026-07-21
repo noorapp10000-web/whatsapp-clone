@@ -286,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       isMe: _messages[i].senderId == widget.myUserId,
                       onReply: (id) => setState(() => _replyToId = id),
                       onDelete: (id) async {
-                        await ApiService.deleteMessage(id);
+                        await ApiService.deleteMessage(widget.conversation.id, id);
                       },
                     ),
                   ),
