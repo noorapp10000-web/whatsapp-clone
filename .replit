@@ -41,3 +41,7 @@ FIREBASE_PROJECT_ID = "whatsapp-clone-976d4"
 NODE_ENV = "production"
 CLOUDINARY_API_KEY = "623979499319743"
 CLOUDINARY_API_SECRET = "w0bYB6TUsvhfQ_38XoID9BbNyN8"
+
+[deployment]
+deploymentTarget = "vm"
+run = ["node", "server/index.js"]
