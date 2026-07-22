@@ -52,6 +52,9 @@ jobs:
           echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
           cat android/local.properties
 
+      - name: Pre-cache Flutter engine artifacts
+        run: flutter precache --android
+
       - name: Clean Gradle & Flutter caches
         run: |
           rm -rf ~/.gradle/caches ~/.gradle/wrapper/dists
