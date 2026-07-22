@@ -28,12 +28,14 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.27.4'
           channel: stable
           cache: false
 
       - name: Precache Flutter Android artifacts
         run: flutter precache --android
+
+      - name: Flutter version info
+        run: flutter --version
 
       - name: Install NDK 27.0.12077973
         run: |
