@@ -7,13 +7,15 @@ plugins {
 
 android {
     namespace "com.whatsappclone.app"
-    compileSdk flutter.compileSdkVersion
+    compileSdk 35
     // Pin NDK version required by flutter_webrtc native code
     ndkVersion "27.0.12077973"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+        // Required by flutter_local_notifications (uses java.time APIs)
+        coreLibraryDesugaringEnabled true
     }
 
     kotlinOptions {
@@ -23,7 +25,7 @@ android {
     defaultConfig {
         applicationId "com.whatsappclone.app"
         minSdk 21
-        targetSdk flutter.targetSdkVersion
+        targetSdk 35
         versionCode flutter.versionCode
         versionName flutter.versionName
         multiDexEnabled true
@@ -47,6 +49,8 @@ flutter {
 }
 
 dependencies {
+    // Core library desugaring — required by flutter_local_notifications
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"
     implementation "androidx.multidex:multidex:2.0.1"
     implementation platform("com.google.firebase:firebase-bom:33.0.0")
     // Ensure sqflite (used by flutter_cache_manager transitive dep) can compile
