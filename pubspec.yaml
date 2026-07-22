@@ -4,7 +4,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.3.0 <4.0.0'
+  sdk: '>=3.6.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -23,7 +23,7 @@ dependencies:
   web_socket_channel: ^3.0.1
 
   # WebRTC
-  flutter_webrtc: ^0.12.6
+  flutter_webrtc: ^1.5.2
 
   # Media
   image_picker: ^1.1.2
