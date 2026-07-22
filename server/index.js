@@ -62,7 +62,7 @@ app.use((err, req, res, _next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '::', () => {
   console.log(`✅ WhatsApp Clone backend running on port ${PORT}`);
   console.log(`   Firebase: ${firebaseReady ? 'ready' : 'NOT ready (check FIREBASE_SERVICE_ACCOUNT)'}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
