@@ -27,7 +27,7 @@ jobs:
         with:
           flutter-version: '3.27.4'
           channel: stable
-          cache: true
+          cache: false
 
       - name: Write google-services.json
         run: |
@@ -52,8 +52,10 @@ jobs:
           echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
           cat android/local.properties
 
-      - name: Clean Flutter build cache
-        run: flutter clean
+      - name: Clean Gradle & Flutter caches
+        run: |
+          rm -rf ~/.gradle/caches ~/.gradle/wrapper/dists
+          flutter clean
 
       - name: Get Flutter dependencies
         run: flutter pub get
