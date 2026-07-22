@@ -42,19 +42,38 @@ jobs:
 
       - name: Write google-services.json
         run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
-          echo "✅ google-services.json written"
+          SECRET='${{ secrets.GOOGLE_SERVICES_JSON }}'
+          if [ -n "$SECRET" ] && [ "$SECRET" != "" ]; then
+            echo "$SECRET" > android/app/google-services.json
+            echo "✅ google-services.json written from secret"
+          else
+            echo "⚠️  GOOGLE_SERVICES_JSON secret not set — using committed google-services.json"
+            if [ ! -f android/app/google-services.json ]; then
+              echo "❌ No google-services.json found! Build will fail."
+              exit 1
+            fi
+          fi
+          echo "=== google-services.json project_id ==="
+          cat android/app/google-services.json | grep project_id | head -1
 
       - name: Inject Backend URLs into Dart sources
         run: |
-          BACKEND="${{ secrets.BACKEND_URL }}"
-          BACKEND_WS="${{ secrets.BACKEND_WS_URL }}"
+          BACKEND='${{ secrets.BACKEND_URL }}'
+          BACKEND_WS='${{ secrets.BACKEND_WS_URL }}'
           BACKEND="${BACKEND%/}"
           BACKEND_WS="${BACKEND_WS%/}"
-          sed -i "s|https://YOUR_REPLIT_BACKEND_URL|${BACKEND}|g" lib/services/api_service.dart
-          sed -i "s|wss://YOUR_REPLIT_BACKEND_URL|${BACKEND_WS}|g"  lib/services/websocket_service.dart
-          echo "✅ API URL  → ${BACKEND}/api"
-          echo "✅ WS  URL  → ${BACKEND_WS}/ws"
+          if [ -n "$BACKEND" ]; then
+            sed -i "s|https://YOUR_REPLIT_BACKEND_URL|${BACKEND}|g" lib/services/api_service.dart
+            echo "✅ API URL  → ${BACKEND}/api"
+          else
+            echo "⚠️  BACKEND_URL not set — using placeholder (app will need backend URL to function)"
+          fi
+          if [ -n "$BACKEND_WS" ]; then
+            sed -i "s|wss://YOUR_REPLIT_BACKEND_URL|${BACKEND_WS}|g" lib/services/websocket_service.dart
+            echo "✅ WS  URL  → ${BACKEND_WS}/ws"
+          else
+            echo "⚠️  BACKEND_WS_URL not set — using placeholder"
+          fi
 
       - name: Write local.properties
         run: |
@@ -67,23 +86,7 @@ jobs:
         run: flutter clean
 
       - name: Get Flutter dependencies
-        run: flutter pub get --verbose
-
-      - name: Debug plugin files
-        run: |
-          echo "=== .flutter-plugins ==="
-          cat .flutter-plugins 2>/dev/null || echo "MISSING"
-          echo ""
-          echo "=== .flutter-plugins-dependencies (first 5 keys) ==="
-          node -e "
-            const fs = require('fs');
-            try {
-              const d = JSON.parse(fs.readFileSync('.flutter-plugins-dependencies','utf8'));
-              const plugins = d.plugins?.android || [];
-              console.log('Android plugins count:', plugins.length);
-              plugins.slice(0,3).forEach(p=>console.log(' -', p.name, p.path));
-            } catch(e) { console.log('Error:', e.message); }
-          " 2>/dev/null || cat .flutter-plugins-dependencies | head -30 || echo "MISSING"
+        run: flutter pub get
 
       - name: Build Debug APK
         run: |
