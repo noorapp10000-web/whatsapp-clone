@@ -8,7 +8,8 @@ plugins {
 android {
     namespace "com.whatsappclone.app"
     compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
+    // Pin NDK version required by flutter_webrtc native code
+    ndkVersion "27.0.12077973"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
@@ -48,4 +49,6 @@ flutter {
 dependencies {
     implementation "androidx.multidex:multidex:2.0.1"
     implementation platform("com.google.firebase:firebase-bom:33.0.0")
+    // Ensure sqflite (used by flutter_cache_manager transitive dep) can compile
+    implementation "androidx.annotation:annotation:1.8.0"
 }

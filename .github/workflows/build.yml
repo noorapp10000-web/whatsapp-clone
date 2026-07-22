@@ -29,6 +29,14 @@ jobs:
           channel: stable
           cache: false
 
+      - name: Install NDK 27 (required by flutter_webrtc)
+        run: |
+          SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          echo "y" | "$SDKMANAGER" "ndk;27.0.12077973" 2>&1 | tail -5 || \
+          echo "y" | "$SDKMANAGER" "ndk;26.3.11579264" 2>&1 | tail -5
+          echo "Installed NDKs:"
+          ls "$ANDROID_SDK_ROOT/ndk/" 2>/dev/null || true
+
       - name: Write google-services.json
         run: |
           echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > android/app/google-services.json
@@ -38,7 +46,6 @@ jobs:
         run: |
           BACKEND="${{ secrets.BACKEND_URL }}"
           BACKEND_WS="${{ secrets.BACKEND_WS_URL }}"
-          # Strip trailing slash
           BACKEND="${BACKEND%/}"
           BACKEND_WS="${BACKEND_WS%/}"
           sed -i "s|https://YOUR_REPLIT_BACKEND_URL|${BACKEND}|g" lib/services/api_service.dart
@@ -48,17 +55,13 @@ jobs:
 
       - name: Write local.properties
         run: |
-          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" > android/local.properties
+          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
           echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
+          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> android/local.properties
           cat android/local.properties
 
       - name: Pre-cache Flutter engine artifacts
         run: flutter precache --android
-
-      - name: Clean Gradle & Flutter caches
-        run: |
-          rm -rf ~/.gradle/caches ~/.gradle/wrapper/dists
-          flutter clean
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -68,9 +71,13 @@ jobs:
         continue-on-error: true
 
       - name: Build Debug APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
         run: flutter build apk --debug --no-tree-shake-icons
 
       - name: Build Release APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
         run: flutter build apk --release --no-tree-shake-icons
         continue-on-error: true
 
