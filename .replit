@@ -36,3 +36,10 @@ externalPort = 3000
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+CLOUDINARY_CLOUD_NAME = "mj0osj22"
+FIREBASE_PROJECT_ID = "whatsapp-clone-976d4"
+NODE_ENV = "production"

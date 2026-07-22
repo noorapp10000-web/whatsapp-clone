@@ -7,8 +7,21 @@ function broadcast(uid, data) {
   const sockets = userSockets.get(uid);
   if (!sockets) return;
   const payload = JSON.stringify(data);
-  sockets.forEach(ws => { if (ws.readyState === 1) ws.send(payload); });
+  sockets.forEach(ws => {
+    if (ws.readyState === 1) ws.send(payload);
+  });
 }
+
+const RELAY_TYPES = [
+  // Call signaling
+  'call_offer', 'call_answer', 'call_ice', 'call_end', 'call_reject', 'screen_share_offer',
+  // Listen Together
+  'lt_invite', 'lt_accept', 'lt_reject', 'lt_play', 'lt_pause', 'lt_seek', 'lt_next', 'lt_end',
+  // Typing
+  'typing_start', 'typing_stop',
+  // General relay
+  'reaction',
+];
 
 function initWebSocket(server) {
   const wss = new WebSocketServer({ server, path: '/ws' });
@@ -34,16 +47,24 @@ function initWebSocket(server) {
     ws.on('message', raw => {
       try {
         const data = JSON.parse(raw.toString());
-        const RELAY = ['call_offer','call_answer','call_ice','call_end','call_reject','screen_share_offer'];
-        if (RELAY.includes(data.type) && data.targetUid) {
+        if (data.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
+          return;
+        }
+        if (RELAY_TYPES.includes(data.type) && data.targetUid) {
           broadcast(data.targetUid, { ...data, fromUid: uid });
         }
-      } catch (e) { console.error('WS msg error:', e.message); }
+      } catch (e) {
+        console.error('WS msg error:', e.message);
+      }
     });
 
     ws.on('close', () => {
       const sockets = userSockets.get(uid);
-      if (sockets) { sockets.delete(ws); if (sockets.size === 0) userSockets.delete(uid); }
+      if (sockets) {
+        sockets.delete(ws);
+        if (sockets.size === 0) userSockets.delete(uid);
+      }
     });
 
     ws.on('error', err => console.error(`WS error for ${uid}:`, err.message));

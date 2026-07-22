@@ -21,7 +21,7 @@ class FirestoreService {
     for (final doc in snap.docs) {
       if (doc.id == myUid) continue;
       final data = doc.data();
-      final name  = (data['displayName'] ?? '').toString().toLowerCase();
+      final name = (data['displayName'] ?? '').toString().toLowerCase();
       final email = (data['email'] ?? '').toString().toLowerCase();
       if (name.contains(qLow) || email.contains(qLow)) {
         results.add(UserModel.fromJson({'id': doc.id, ...data}));
@@ -29,6 +29,13 @@ class FirestoreService {
       }
     }
     return results;
+  }
+
+  static Future<void> updateUserOnline(String uid, bool isOnline) async {
+    await _db.collection('users').doc(uid).update({
+      'isOnline': isOnline,
+      'lastSeen': FieldValue.serverTimestamp(),
+    });
   }
 
   // ─── Conversations ────────────────────────────────────────────────────────
@@ -39,7 +46,8 @@ class FirestoreService {
         .orderBy('lastMessageAt', descending: true)
         .snapshots()
         .map((snap) => snap.docs
-            .map((doc) => ConversationModel.fromJson({'id': doc.id, ...doc.data()}))
+            .map((doc) =>
+                ConversationModel.fromJson({'id': doc.id, ...doc.data()}))
             .toList());
   }
 
@@ -58,7 +66,7 @@ class FirestoreService {
       }
     }
 
-    final myDoc    = await _db.collection('users').doc(myUid).get();
+    final myDoc = await _db.collection('users').doc(myUid).get();
     final otherDoc = await _db.collection('users').doc(otherUid).get();
     final now = Timestamp.now();
 
@@ -69,6 +77,34 @@ class FirestoreService {
         {'uid': myUid, ...(myDoc.data() ?? {})},
         {'uid': otherUid, ...(otherDoc.data() ?? {})},
       ],
+      'lastMessageAt': now,
+      'createdAt': now,
+      'createdBy': myUid,
+    });
+    final convDoc = await ref.get();
+    return ConversationModel.fromJson({'id': convDoc.id, ...convDoc.data()!});
+  }
+
+  static Future<ConversationModel> createGroupConversation({
+    required String myUid,
+    required List<String> memberUids,
+    required String name,
+    String? photoUrl,
+  }) async {
+    final allUids = [myUid, ...memberUids];
+    final participantDocs = await Future.wait(
+        allUids.map((uid) => _db.collection('users').doc(uid).get()));
+
+    final now = Timestamp.now();
+    final ref = await _db.collection('conversations').add({
+      'type': 'group',
+      'name': name,
+      if (photoUrl != null) 'groupPhotoUrl': photoUrl,
+      'participantIds': allUids,
+      'participants': participantDocs
+          .map((d) => {'uid': d.id, ...d.data() ?? {}})
+          .toList(),
+      'adminIds': [myUid],
       'lastMessageAt': now,
       'createdAt': now,
       'createdBy': myUid,
@@ -91,7 +127,7 @@ class FirestoreService {
             .toList());
   }
 
-  static Future<void> sendMessage(
+  static Future<String> sendMessage(
     String convId,
     String senderUid, {
     required String type,
@@ -101,32 +137,92 @@ class FirestoreService {
     int? fileSize,
     String? mimeType,
     String? replyToId,
+    int? durationMs,
+    // Listen Together
+    String? ltSessionId,
+    String? ltUrl,
+    String? ltTitle,
+    List<Map<String, dynamic>>? ltPlaylist,
   }) async {
     final now = FieldValue.serverTimestamp();
-    final msgRef =
-        _db.collection('conversations').doc(convId).collection('messages').doc();
+    final msgRef = _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .doc();
+
     await msgRef.set({
       'senderId': senderUid,
       'type': type,
-      if (content  != null) 'content':  content,
-      if (fileUrl  != null) 'fileUrl':  fileUrl,
+      if (content != null) 'content': content,
+      if (fileUrl != null) 'fileUrl': fileUrl,
       if (fileName != null) 'fileName': fileName,
       if (fileSize != null) 'fileSize': fileSize,
       if (mimeType != null) 'mimeType': mimeType,
       if (replyToId != null) 'replyToId': replyToId,
+      if (durationMs != null) 'durationMs': durationMs,
+      if (ltSessionId != null) 'ltSessionId': ltSessionId,
+      if (ltUrl != null) 'ltUrl': ltUrl,
+      if (ltTitle != null) 'ltTitle': ltTitle,
+      if (ltPlaylist != null) 'ltPlaylist': ltPlaylist,
       'status': 'sent',
       'createdAt': now,
     });
+
     await _db.collection('conversations').doc(convId).update({
       'lastMessage': {
         'id': msgRef.id,
-        'content': content ?? fileName ?? '',
+        'content': content ??
+            (type == 'voice'
+                ? '🎤 Voice message'
+                : type == 'listen_together'
+                    ? '🎵 Listen Together: ${ltTitle ?? 'Music'}'
+                    : fileName ?? ''),
         'type': type,
         'senderId': senderUid,
         'createdAt': DateTime.now().toIso8601String(),
       },
       'lastMessageAt': now,
     });
+
+    return msgRef.id;
+  }
+
+  static Future<void> markMessagesRead(String convId, String myUid) async {
+    final unread = await _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .where('senderId', isNotEqualTo: myUid)
+        .where('status', isEqualTo: 'sent')
+        .limit(30)
+        .get();
+
+    final batch = _db.batch();
+    for (final doc in unread.docs) {
+      batch.update(doc.reference, {'status': 'read'});
+    }
+    await batch.commit();
+  }
+
+  static Future<void> addReaction(
+      String convId, String msgId, String myUid, String emoji) async {
+    await _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .doc(msgId)
+        .update({'reactions.$myUid': emoji});
+  }
+
+  static Future<void> removeReaction(
+      String convId, String msgId, String myUid) async {
+    await _db
+        .collection('conversations')
+        .doc(convId)
+        .collection('messages')
+        .doc(msgId)
+        .update({'reactions.$myUid': FieldValue.delete()});
   }
 
   static Future<void> deleteMessage(String convId, String msgId) async {
@@ -136,6 +232,44 @@ class FirestoreService {
         .collection('messages')
         .doc(msgId)
         .delete();
+  }
+
+  // ─── Listen Together Sessions ─────────────────────────────────────────────
+  static Future<String> createListenSession({
+    required String creatorUid,
+    required List<String> participantUids,
+    required List<Map<String, dynamic>> playlist,
+  }) async {
+    final ref = await _db.collection('listen_sessions').add({
+      'creatorUid': creatorUid,
+      'participants': [creatorUid, ...participantUids],
+      'playlist': playlist,
+      'currentIndex': 0,
+      'isPlaying': false,
+      'positionMs': 0,
+      'status': 'pending',
+      'createdAt': FieldValue.serverTimestamp(),
+      'lastUpdatedAt': FieldValue.serverTimestamp(),
+      'lastUpdatedBy': creatorUid,
+    });
+    return ref.id;
+  }
+
+  static Future<void> updateListenSession(
+      String sessionId, Map<String, dynamic> data, String updaterUid) async {
+    await _db.collection('listen_sessions').doc(sessionId).update({
+      ...data,
+      'lastUpdatedAt': FieldValue.serverTimestamp(),
+      'lastUpdatedBy': updaterUid,
+    });
+  }
+
+  static Stream<Map<String, dynamic>?> listenSessionStream(String sessionId) {
+    return _db
+        .collection('listen_sessions')
+        .doc(sessionId)
+        .snapshots()
+        .map((doc) => doc.exists ? {'id': doc.id, ...doc.data()!} : null);
   }
 
   // ─── Calls ────────────────────────────────────────────────────────────────
