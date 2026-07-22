@@ -46,6 +46,15 @@ jobs:
           echo "✅ API URL  → ${BACKEND}/api"
           echo "✅ WS  URL  → ${BACKEND_WS}/ws"
 
+      - name: Write local.properties
+        run: |
+          echo "flutter.sdk=$(dirname $(dirname $(which flutter)))" > android/local.properties
+          echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
+          cat android/local.properties
+
+      - name: Clean Flutter build cache
+        run: flutter clean
+
       - name: Get Flutter dependencies
         run: flutter pub get
 
