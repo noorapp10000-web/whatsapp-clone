@@ -1,4 +1,4 @@
-FROM node:20-slim
+FROM node:22-slim
 
 # Upgrade npm first — npm 10.8.2 bundled in node:20-slim has a critical
 # "Exit handler never called" bug that causes npm install to exit without
