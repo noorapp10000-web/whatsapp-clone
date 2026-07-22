@@ -31,9 +31,6 @@ jobs:
           channel: stable
           cache: false
 
-      - name: Precache Flutter Android artifacts
-        run: flutter precache --android
-
       - name: Flutter version info
         run: flutter --version
 
@@ -41,8 +38,7 @@ jobs:
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           echo "y" | "$SDKMANAGER" "ndk;27.0.12077973"
-          echo "✅ NDK installed:"
-          ls "$ANDROID_SDK_ROOT/ndk/"
+          echo "✅ NDK installed"
 
       - name: Write google-services.json
         run: |
@@ -69,27 +65,19 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
-      - name: Analyze code
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
-        continue-on-error: true
-
-      - name: Clean Flutter build
-        run: flutter clean
-
-      - name: Re-write local.properties after clean
-        run: |
-          echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
-          echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
-
       - name: Build Debug APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          flutter build apk --debug --no-tree-shake-icons
+          flutter build apk --debug --no-tree-shake-icons --no-pub
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Build Release APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          flutter build apk --release --no-tree-shake-icons
+          flutter build apk --release --no-tree-shake-icons --no-pub
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
         continue-on-error: true
 
       - name: Upload Debug APK
