@@ -28,6 +28,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: "3.24.5"
           channel: stable
           cache: false
 
@@ -60,36 +61,42 @@ jobs:
         run: |
           echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
           echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
+          echo "=== local.properties ==="
           cat android/local.properties
 
-      - name: Get Flutter dependencies
-        run: flutter pub get
+      - name: Flutter clean
+        run: flutter clean
 
-      - name: Fix GeneratedPluginRegistrant missing Log import
+      - name: Get Flutter dependencies
+        run: flutter pub get --verbose
+
+      - name: Debug plugin files
         run: |
-          FILE="android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java"
-          if [ -f "$FILE" ]; then
-            if ! grep -q "import android.util.Log" "$FILE"; then
-              sed -i 's/^package io\.flutter\.plugins;/package io.flutter.plugins;\nimport android.util.Log;/' "$FILE"
-              echo "✅ Patched: added import android.util.Log to GeneratedPluginRegistrant.java"
-            else
-              echo "⏭️  No patch needed — import already present"
-            fi
-          else
-            echo "⚠️  GeneratedPluginRegistrant.java not found — skipping patch"
-          fi
+          echo "=== .flutter-plugins ==="
+          cat .flutter-plugins 2>/dev/null || echo "MISSING"
+          echo ""
+          echo "=== .flutter-plugins-dependencies (first 5 keys) ==="
+          node -e "
+            const fs = require('fs');
+            try {
+              const d = JSON.parse(fs.readFileSync('.flutter-plugins-dependencies','utf8'));
+              const plugins = d.plugins?.android || [];
+              console.log('Android plugins count:', plugins.length);
+              plugins.slice(0,3).forEach(p=>console.log(' -', p.name, p.path));
+            } catch(e) { console.log('Error:', e.message); }
+          " 2>/dev/null || cat .flutter-plugins-dependencies | head -30 || echo "MISSING"
 
       - name: Build Debug APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          flutter build apk --debug --no-tree-shake-icons --no-pub
+          flutter build apk --debug --no-tree-shake-icons
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Build Release APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
-          flutter build apk --release --no-tree-shake-icons --no-pub
+          flutter build apk --release --no-tree-shake-icons
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
         continue-on-error: true
