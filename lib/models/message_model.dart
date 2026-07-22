@@ -1,17 +1,18 @@
 class MessageModel {
-  final int id;
-  final int conversationId;
-  final int senderId;
+  final String id;
+  final String conversationId;
+  final String senderId;
   final String type;
   final String? content;
   final String? fileUrl;
   final String? fileName;
   final int? fileSize;
   final String? mimeType;
-  final int? replyToId;
+  final String? replyToId;
   final DateTime createdAt;
   final String? senderName;
   final String? senderPhoto;
+  final String status;
 
   MessageModel({
     required this.id,
@@ -27,35 +28,31 @@ class MessageModel {
     required this.createdAt,
     this.senderName,
     this.senderPhoto,
+    this.status = 'sent',
   });
 
-  factory MessageModel.fromJson(Map<String, dynamic> json) {
-    // Handle both snake_case (from server) and camelCase keys
-    final conversationId = json['conversation_id'] ?? json['conversationId'];
-    final senderId = json['sender_id'] ?? json['senderId'];
-    final fileUrl = json['file_url'] ?? json['fileUrl'];
-    final fileName = json['file_name'] ?? json['fileName'];
-    final fileSize = json['file_size'] ?? json['fileSize'];
-    final mimeType = json['mime_type'] ?? json['mimeType'];
-    final replyToId = json['reply_to_id'] ?? json['replyToId'];
-    final createdAt = json['created_at'] ?? json['createdAt'];
-    final senderName = json['sender_name'] ?? json['senderName'];
-    final senderPhoto = json['sender_photo'] ?? json['senderPhoto'];
+  static DateTime _ts(dynamic v) {
+    if (v == null) return DateTime.now();
+    if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
+    try { return (v as dynamic).toDate() as DateTime; } catch (_) { return DateTime.now(); }
+  }
 
+  factory MessageModel.fromJson(Map<String, dynamic> json) {
     return MessageModel(
-      id: json['id'] as int,
-      conversationId: conversationId as int? ?? 0,
-      senderId: senderId as int? ?? 0,
+      id: (json['id'] ?? '') as String,
+      conversationId: (json['conversationId'] ?? json['conversation_id'] ?? '').toString(),
+      senderId: (json['senderId'] ?? json['sender_id'] ?? '').toString(),
       type: (json['type'] as String? ?? 'text'),
       content: json['content'] as String?,
-      fileUrl: fileUrl as String?,
-      fileName: fileName as String?,
-      fileSize: fileSize as int?,
-      mimeType: mimeType as String?,
-      replyToId: replyToId as int?,
-      createdAt: DateTime.parse(createdAt as String),
-      senderName: senderName as String?,
-      senderPhoto: senderPhoto as String?,
+      fileUrl: (json['fileUrl'] ?? json['file_url']) as String?,
+      fileName: (json['fileName'] ?? json['file_name']) as String?,
+      fileSize: (json['fileSize'] ?? json['file_size']) as int?,
+      mimeType: (json['mimeType'] ?? json['mime_type']) as String?,
+      replyToId: (json['replyToId'] ?? json['reply_to_id'])?.toString(),
+      createdAt: _ts(json['createdAt'] ?? json['created_at']),
+      senderName: (json['senderName'] ?? json['sender_name']) as String?,
+      senderPhoto: (json['senderPhoto'] ?? json['sender_photo']) as String?,
+      status: (json['status'] as String? ?? 'sent'),
     );
   }
 }

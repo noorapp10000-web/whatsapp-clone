@@ -1,0 +1,32 @@
+name: Deploy Server to Fly.io
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - 'Dockerfile'
+      - 'fly.toml'
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Set Fly secrets
+        run: |
+          flyctl secrets set \
+            FIREBASE_SERVICE_ACCOUNT="${{ secrets.FIREBASE_SERVICE_ACCOUNT }}" \
+            FIREBASE_PROJECT_ID="whatsapp-clone-976d4" \
+            CLOUDINARY_CLOUD_NAME="${{ secrets.CLOUDINARY_CLOUD_NAME }}" \
+            CLOUDINARY_API_KEY="${{ secrets.CLOUDINARY_API_KEY }}" \
+            CLOUDINARY_API_SECRET="${{ secrets.CLOUDINARY_API_SECRET }}" \
+            --app wa-clone-976d4
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Deploy
+        run: flyctl deploy --remote-only --app wa-clone-976d4
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

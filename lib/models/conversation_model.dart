@@ -1,13 +1,14 @@
 import 'message_model.dart';
 
 class ConversationModel {
-  final int id;
+  final String id;
   final String type;
   final String? name;
   final String? groupPhotoUrl;
+  final List<String> participantIds;
+  final List<Map<String, dynamic>> participants;
   final DateTime lastMessageAt;
   final DateTime createdAt;
-  final List<Map<String, dynamic>> participants;
   final MessageModel? lastMessage;
   final int unreadCount;
 
@@ -16,62 +17,62 @@ class ConversationModel {
     required this.type,
     this.name,
     this.groupPhotoUrl,
+    required this.participantIds,
+    required this.participants,
     required this.lastMessageAt,
     required this.createdAt,
-    required this.participants,
     this.lastMessage,
     this.unreadCount = 0,
   });
 
-  factory ConversationModel.fromJson(Map<String, dynamic> json) {
-    // Handle both snake_case (from server) and camelCase keys
-    final updatedAt = json['updated_at'] ?? json['updatedAt'] ?? json['created_at'] ?? json['createdAt'];
-    final createdAt = json['created_at'] ?? json['createdAt'] ?? updatedAt;
-    final lastMessageData = json['last_message'] ?? json['lastMessage'];
-    final unreadCount = json['unread_count'] ?? json['unreadCount'] ?? 0;
+  static DateTime _ts(dynamic v) {
+    if (v == null) return DateTime.now();
+    if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
+    try { return (v as dynamic).toDate() as DateTime; } catch (_) { return DateTime.now(); }
+  }
 
+  factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    final lastMsgRaw = json['lastMessage'] ?? json['last_message'];
     return ConversationModel(
-      id: json['id'] as int,
+      id: (json['id'] ?? '') as String,
       type: (json['type'] as String? ?? 'direct'),
       name: json['name'] as String?,
-      groupPhotoUrl: (json['avatar_url'] ?? json['groupPhotoUrl']) as String?,
-      lastMessageAt: DateTime.parse(updatedAt as String),
-      createdAt: DateTime.parse(createdAt as String),
-      participants: List<Map<String, dynamic>>.from(
-          json['participants'] as List? ?? []),
-      lastMessage: lastMessageData != null
-          ? MessageModel.fromJson(
-              lastMessageData as Map<String, dynamic>)
+      groupPhotoUrl: (json['groupPhotoUrl'] ?? json['avatar_url']) as String?,
+      participantIds: List<String>.from(json['participantIds'] ?? json['participant_ids'] ?? []),
+      participants: List<Map<String, dynamic>>.from(json['participants'] ?? []),
+      lastMessageAt: _ts(json['lastMessageAt'] ?? json['updated_at']),
+      createdAt: _ts(json['createdAt'] ?? json['created_at']),
+      lastMessage: lastMsgRaw != null
+          ? MessageModel.fromJson(lastMsgRaw as Map<String, dynamic>)
           : null,
-      unreadCount: int.tryParse(unreadCount.toString()) ?? 0,
+      unreadCount: int.tryParse((json['unreadCount'] ?? json['unread_count'] ?? 0).toString()) ?? 0,
     );
   }
 
-  String displayName(int myUserId) {
+  String displayName(String myUid) {
     if (type == 'group') return name ?? 'Group';
     final other = participants.firstWhere(
-      (p) => (p['id'] ?? p['userId']) != myUserId,
+      (p) => (p['uid'] ?? p['id'] ?? '') != myUid,
       orElse: () => participants.isNotEmpty ? participants.first : {},
     );
-    return (other['displayName'] ?? other['display_name'] ?? 'Unknown')
-        as String;
+    return (other['displayName'] ?? other['display_name'] ?? 'Unknown') as String;
   }
 
-  String? displayPhoto(int myUserId) {
+  String? displayPhoto(String myUid) {
     if (type == 'group') return groupPhotoUrl;
     final other = participants.firstWhere(
-      (p) => (p['id'] ?? p['userId']) != myUserId,
+      (p) => (p['uid'] ?? p['id'] ?? '') != myUid,
       orElse: () => <String, dynamic>{},
     );
     return (other['photoUrl'] ?? other['photo_url']) as String?;
   }
 
-  bool isOtherOnline(int myUserId) {
-    if (type == 'group') return false;
-    final other = participants.firstWhere(
-      (p) => (p['id'] ?? p['userId']) != myUserId,
-      orElse: () => <String, dynamic>{},
-    );
-    return (other['isOnline'] ?? false) as bool;
-  }
+  String otherUid(String myUid) =>
+      participantIds.firstWhere((id) => id != myUid, orElse: () => '');
+
+  Map<String, dynamic> otherParticipant(String myUid) =>
+      participants.firstWhere(
+        (p) => (p['uid'] ?? p['id'] ?? '') != myUid,
+        orElse: () => <String, dynamic>{},
+      );
 }

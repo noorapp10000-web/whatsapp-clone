@@ -2,27 +2,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/call_service.dart';
 import '../services/websocket_service.dart';
+import '../services/firestore_service.dart';
 
 class CallScreen extends StatefulWidget {
-  final int otherUserId;
+  final String otherUid;
   final String otherName;
   final String? otherPhoto;
   final bool isVideo;
   final bool isIncoming;
-  final int? conversationId;
-  final int? callId;
   final Map<String, dynamic>? offerSdp;
+  final String? convId;
+  final String? callId;
 
   const CallScreen({
     super.key,
-    required this.otherUserId,
+    required this.otherUid,
     required this.otherName,
     this.otherPhoto,
     required this.isVideo,
     required this.isIncoming,
-    this.conversationId,
-    this.callId,
     this.offerSdp,
+    this.convId,
+    this.callId,
   });
 
   @override
@@ -30,332 +31,273 @@ class CallScreen extends StatefulWidget {
 }
 
 class _CallScreenState extends State<CallScreen> {
-  final RTCVideoRenderer _localRenderer = RTCVideoRenderer();
-  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
-  CallState _state = CallState.idle;
-  bool _muted = false;
-  bool _cameraOff = false;
+  final _localRenderer  = RTCVideoRenderer();
+  final _remoteRenderer = RTCVideoRenderer();
+
+  CallState _callState = CallState.idle;
+  bool _isMuted    = false;
+  bool _cameraOff  = false;
+  bool _speakerOn  = true;
   bool _screenSharing = false;
-  String _statusText = 'Connecting...';
+
+  String?  _callId;
+  Duration _elapsed = Duration.zero;
+  final    _watch = Stopwatch();
+  late Future<void> _initFuture;
 
   @override
   void initState() {
     super.initState();
-    _initRenderers();
-    _setupCallService();
-    if (widget.isIncoming) {
-      setState(() => _statusText = 'Incoming call...');
-    } else {
-      _startCall();
-    }
+    _callId = widget.callId;
+
+    CallService.onStateChanged = _onState;
+    CallService.onLocalStream  = (s) { if (mounted) _localRenderer.srcObject = s; };
+    CallService.onRemoteStream = (s) { if (mounted) setState(() { _remoteRenderer.srcObject = s; }); };
+
+    WebSocketService.on('call_answer', _onAnswer);
+    WebSocketService.on('call_ice',    _onIce);
+    WebSocketService.on('call_end',    _onEnd);
+    WebSocketService.on('call_reject', _onReject);
+
+    _initFuture = _init();
   }
 
-  Future<void> _initRenderers() async {
+  Future<void> _init() async {
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
+    if (widget.isIncoming) {
+      setState(() => _callState = CallState.ringing);
+    } else {
+      _callId ??= await FirestoreService.logCall(
+          '', widget.otherUid, widget.isVideo ? 'video' : 'voice');
+      await CallService.startCall(
+        receiverUid: widget.otherUid,
+        isVideo: widget.isVideo,
+        convId: widget.convId,
+        callId: _callId,
+      );
+      setState(() => _callState = CallState.calling);
+    }
   }
 
-  void _setupCallService() {
-    CallService.onStateChanged = (state) {
-      if (mounted) {
-        setState(() {
-          _state = state;
-          _statusText = _stateText(state);
-        });
-        if (state == CallState.ended) {
-          Future.delayed(const Duration(seconds: 1), () {
-            if (mounted) Navigator.pop(context);
-          });
-        }
-      }
-    };
+  void _onState(CallState s) {
+    if (!mounted) return;
+    setState(() => _callState = s);
+    if (s == CallState.active && !_watch.isRunning) {
+      _watch.start();
+      _tick();
+    }
+  }
 
-    CallService.onLocalStream = (stream) {
-      if (mounted) setState(() => _localRenderer.srcObject = stream);
-    };
-
-    CallService.onRemoteStream = (stream) {
-      if (mounted) setState(() => _remoteRenderer.srcObject = stream);
-    };
-
-    // Handle call events from WebSocket
-    WebSocketService.on('call-answer', (msg) async {
-      final sdp = msg['sdp'];
-      if (sdp != null) {
-        // handled inside CallService
-      }
-    });
-
-    WebSocketService.on('call-end', (msg) async {
-      await CallService.endCall(widget.otherUserId, widget.callId);
-      if (mounted) Navigator.pop(context);
-    });
-
-    WebSocketService.on('call-reject', (msg) async {
-      setState(() => _statusText = 'Call rejected');
-      await Future.delayed(const Duration(seconds: 2));
-      if (mounted) Navigator.pop(context);
+  void _tick() {
+    Future.delayed(const Duration(seconds: 1), () {
+      if (!mounted || _callState != CallState.active) return;
+      setState(() => _elapsed = _watch.elapsed);
+      _tick();
     });
   }
 
-  Future<void> _startCall() async {
-    setState(() => _statusText = 'Ringing...');
-    await CallService.startCall(
-      receiverId: widget.otherUserId,
-      isVideo: widget.isVideo,
-      conversationId: widget.conversationId,
-    );
+  void _onAnswer(Map<String, dynamic> msg) {
+    if ((msg['fromUid'] ?? '') == widget.otherUid) {
+      CallService.handleCallAnswer(msg['sdp'] as Map<String, dynamic>);
+    }
   }
 
-  Future<void> _acceptCall() async {
+  void _onIce(Map<String, dynamic> msg) {
+    if ((msg['fromUid'] ?? '') == widget.otherUid) {
+      CallService.addIceCandidate(msg['candidate'] as Map<String, dynamic>);
+    }
+  }
+
+  void _onEnd(Map<String, dynamic> msg) {
+    if ((msg['fromUid'] ?? '') == widget.otherUid) _hangUp(remote: true);
+  }
+
+  void _onReject(Map<String, dynamic> msg) {
+    if ((msg['fromUid'] ?? '') == widget.otherUid) _hangUp(remote: true);
+  }
+
+  Future<void> _accept() async {
     if (widget.offerSdp == null) return;
+    _callId ??= await FirestoreService.logCall(
+        widget.otherUid, '', widget.isVideo ? 'video' : 'voice');
     await CallService.acceptCall(
-      callerId: widget.otherUserId,
+      callerUid: widget.otherUid,
       offerSdp: widget.offerSdp!,
       isVideo: widget.isVideo,
+      callId: _callId,
     );
   }
 
-  Future<void> _endCall() async {
-    await CallService.endCall(widget.otherUserId, widget.callId);
+  Future<void> _reject() async {
+    await CallService.rejectCall(widget.otherUid, _callId);
     if (mounted) Navigator.pop(context);
   }
 
-  Future<void> _rejectCall() async {
-    await CallService.rejectCall(widget.otherUserId, widget.callId);
+  Future<void> _hangUp({bool remote = false}) async {
+    if (!remote) await CallService.endCall(widget.otherUid, _callId);
     if (mounted) Navigator.pop(context);
-  }
-
-  String _stateText(CallState s) {
-    switch (s) {
-      case CallState.calling:
-        return 'Ringing...';
-      case CallState.ringing:
-        return 'Incoming call...';
-      case CallState.active:
-        return widget.isVideo ? 'Video call active' : 'Voice call active';
-      case CallState.ended:
-        return 'Call ended';
-      default:
-        return 'Connecting...';
-    }
   }
 
   @override
   void dispose() {
+    WebSocketService.off('call_answer', _onAnswer);
+    WebSocketService.off('call_ice',    _onIce);
+    WebSocketService.off('call_end',    _onEnd);
+    WebSocketService.off('call_reject', _onReject);
     CallService.onStateChanged = null;
-    CallService.onLocalStream = null;
+    CallService.onLocalStream  = null;
     CallService.onRemoteStream = null;
     _localRenderer.dispose();
     _remoteRenderer.dispose();
     super.dispose();
   }
 
+  String _fmt(Duration d) =>
+      '${d.inMinutes.toString().padLeft(2,'0')}:${(d.inSeconds % 60).toString().padLeft(2,'0')}';
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1A1A2E),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // Remote video (full screen)
-            if (widget.isVideo && _state == CallState.active)
-              RTCVideoView(_remoteRenderer, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
-            else
-              _buildAudioBackground(),
+    return FutureBuilder(
+      future: _initFuture,
+      builder: (_, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            backgroundColor: Color(0xFF1A1A2E),
+            body: Center(child: CircularProgressIndicator(color: Colors.white)),
+          );
+        }
+        return Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(children: [
+            // Remote fullscreen
+            if (widget.isVideo && _callState == CallState.active)
+              Positioned.fill(
+                child: RTCVideoView(_remoteRenderer,
+                    objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover),
+              ),
 
-            // Local video (small overlay)
-            if (widget.isVideo && _state == CallState.active)
-              Positioned(
-                top: 20,
-                right: 20,
-                width: 100,
-                height: 140,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: RTCVideoView(_localRenderer, mirror: true),
+            // Background gradient when no video
+            if (!widget.isVideo || _callState != CallState.active)
+              Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF00A884), Color(0xFF005C4B)],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                  ),
                 ),
               ),
 
-            // Status & controls
+            // Name + status
             Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildControls(),
+              top: 80, left: 0, right: 0,
+              child: Column(children: [
+                CircleAvatar(
+                  radius: 50,
+                  backgroundColor: Colors.white24,
+                  backgroundImage: widget.otherPhoto != null
+                      ? NetworkImage(widget.otherPhoto!) : null,
+                  child: widget.otherPhoto == null
+                      ? Text(widget.otherName.isNotEmpty ? widget.otherName[0].toUpperCase() : '?',
+                          style: const TextStyle(fontSize: 36, color: Colors.white))
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                Text(widget.otherName,
+                    style: const TextStyle(color: Colors.white, fontSize: 26,
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(
+                  _callState == CallState.active   ? _fmt(_elapsed)
+                  : _callState == CallState.calling ? 'Calling…'
+                  : _callState == CallState.ringing
+                      ? 'Incoming ${widget.isVideo ? 'Video' : 'Voice'} Call'
+                      : '',
+                  style: const TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+              ]),
             ),
-          ],
-        ),
-      ),
+
+            // Local PiP
+            if (widget.isVideo && _callState == CallState.active)
+              Positioned(
+                top: 48, right: 16, width: 100, height: 140,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: RTCVideoView(_localRenderer,
+                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                      mirror: true),
+                ),
+              ),
+
+            // Controls
+            Positioned(bottom: 48, left: 0, right: 0, child: _controls()),
+          ]),
+        );
+      },
     );
   }
 
-  Widget _buildAudioBackground() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _controls() {
+    if (_callState == CallState.ringing) {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          CircleAvatar(
-            radius: 70,
-            backgroundImage: widget.otherPhoto != null
-                ? NetworkImage(widget.otherPhoto!)
-                : null,
-            child: widget.otherPhoto == null
-                ? Text(
-                    widget.otherName.isNotEmpty
-                        ? widget.otherName[0].toUpperCase()
-                        : '?',
-                    style: const TextStyle(fontSize: 48, color: Colors.white),
-                  )
-                : null,
-          ),
-          const SizedBox(height: 24),
-          Text(
-            widget.otherName,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 28, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _statusText,
-            style: const TextStyle(color: Colors.white70, fontSize: 16),
-          ),
+          _btn(Icons.call_end, Colors.red,   _reject, label: 'Decline'),
+          _btn(Icons.call,     Colors.green, _accept, label: 'Accept'),
+        ],
+      );
+    }
+    return Column(children: [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _btn(_isMuted ? Icons.mic_off : Icons.mic,
+              _isMuted ? Colors.red : Colors.white24,
+              () { setState(() => _isMuted = !_isMuted); CallService.toggleMute(); },
+              label: _isMuted ? 'Unmute' : 'Mute'),
+          if (widget.isVideo)
+            _btn(_cameraOff ? Icons.videocam_off : Icons.videocam,
+                _cameraOff ? Colors.red : Colors.white24,
+                () { setState(() => _cameraOff = !_cameraOff); CallService.toggleCamera(); },
+                label: _cameraOff ? 'Start Cam' : 'Stop Cam'),
+          _btn(_speakerOn ? Icons.volume_up : Icons.hearing,
+              Colors.white24,
+              () { setState(() => _speakerOn = !_speakerOn); CallService.setSpeaker(_speakerOn); },
+              label: _speakerOn ? 'Earpiece' : 'Speaker'),
+          if (widget.isVideo)
+            _btn(Icons.screen_share,
+                _screenSharing ? Colors.green : Colors.white24,
+                () async {
+                  setState(() => _screenSharing = !_screenSharing);
+                  if (_screenSharing) await CallService.startScreenShare(widget.otherUid);
+                },
+                label: 'Screen'),
         ],
       ),
-    );
+      const SizedBox(height: 24),
+      _btn(Icons.call_end, Colors.red, _hangUp, size: 64, label: 'End'),
+    ]);
   }
 
-  Widget _buildControls() {
-    return Container(
-      padding: const EdgeInsets.all(32),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Colors.black.withOpacity(0.8), Colors.transparent],
+  Widget _btn(IconData icon, Color bg, dynamic onTap, {double size = 54, String? label}) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GestureDetector(
+          onTap: onTap is Future<void> Function() ? () => onTap() : onTap as VoidCallback,
+          child: Container(
+            width: size, height: size,
+            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+            child: Icon(icon, color: Colors.white, size: size * 0.45),
+          ),
         ),
-      ),
-      child: widget.isIncoming && _state != CallState.active
-          ? Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _callButton(
-                  icon: Icons.call_end,
-                  color: Colors.red,
-                  label: 'Decline',
-                  onTap: _rejectCall,
-                ),
-                _callButton(
-                  icon: Icons.call,
-                  color: Colors.green,
-                  label: 'Accept',
-                  onTap: _acceptCall,
-                ),
-              ],
-            )
-          : Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    _toggleButton(
-                      icon: _muted ? Icons.mic_off : Icons.mic,
-                      label: _muted ? 'Unmute' : 'Mute',
-                      active: _muted,
-                      onTap: () {
-                        setState(() => _muted = !_muted);
-                        CallService.toggleMute();
-                      },
-                    ),
-                    if (widget.isVideo)
-                      _toggleButton(
-                        icon: _cameraOff ? Icons.videocam_off : Icons.videocam,
-                        label: _cameraOff ? 'Start cam' : 'Stop cam',
-                        active: _cameraOff,
-                        onTap: () {
-                          setState(() => _cameraOff = !_cameraOff);
-                          CallService.toggleCamera();
-                        },
-                      ),
-                    if (widget.isVideo)
-                      _toggleButton(
-                        icon: Icons.screen_share,
-                        label: 'Share screen',
-                        active: _screenSharing,
-                        onTap: () async {
-                          await CallService.startScreenShare(widget.otherUserId);
-                          setState(() => _screenSharing = true);
-                        },
-                      ),
-                    if (widget.isVideo)
-                      _toggleButton(
-                        icon: Icons.flip_camera_android,
-                        label: 'Flip',
-                        active: false,
-                        onTap: () => CallService.switchCamera(),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 24),
-                _callButton(
-                  icon: Icons.call_end,
-                  color: Colors.red,
-                  label: 'End call',
-                  onTap: _endCall,
-                ),
-              ],
-            ),
-    );
-  }
-
-  Widget _callButton({
-    required IconData icon,
-    required Color color,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 60,
-            height: 60,
-            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            child: Icon(icon, color: Colors.white, size: 28),
-          ),
-          const SizedBox(height: 8),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
-  Widget _toggleButton({
-    required IconData icon,
-    required String label,
-    required bool active,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Column(
-        children: [
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              color: active ? Colors.white : Colors.white24,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(icon,
-                color: active ? Colors.black87 : Colors.white, size: 24),
-          ),
+        if (label != null) ...[
           const SizedBox(height: 6),
-          Text(label,
-              style: const TextStyle(color: Colors.white70, fontSize: 11)),
+          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
         ],
-      ),
+      ],
     );
   }
 }

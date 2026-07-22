@@ -1,5 +1,5 @@
 class UserModel {
-  final int id;
+  final String id;
   final String firebaseUid;
   final String email;
   final String displayName;
@@ -19,24 +19,23 @@ class UserModel {
     this.lastSeen,
   });
 
-  factory UserModel.fromJson(Map<String, dynamic> json) {
-    // Handle both snake_case (from server) and camelCase keys
-    final firebaseUid = json['firebase_uid'] ?? json['firebaseUid'] ?? '';
-    final displayName = json['display_name'] ?? json['displayName'] ?? '';
-    final photoUrl = json['photo_url'] ?? json['photoUrl'];
-    final lastSeen = json['last_seen'] ?? json['lastSeen'];
+  static DateTime? _ts(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return DateTime.tryParse(v);
+    try { return (v as dynamic).toDate() as DateTime; } catch (_) { return null; }
+  }
 
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    final uid = (json['uid'] ?? json['id'] ?? '') as String;
     return UserModel(
-      id: json['id'] as int,
-      firebaseUid: firebaseUid as String,
+      id: uid,
+      firebaseUid: uid,
       email: (json['email'] as String? ?? ''),
-      displayName: displayName as String,
-      photoUrl: photoUrl as String?,
+      displayName: (json['displayName'] ?? json['display_name'] ?? '') as String,
+      photoUrl: (json['photoUrl'] ?? json['photo_url']) as String?,
       status: json['status'] as String?,
       isOnline: (json['isOnline'] ?? json['is_online'] ?? false) as bool,
-      lastSeen: lastSeen != null
-          ? DateTime.tryParse(lastSeen as String)
-          : null,
+      lastSeen: _ts(json['lastSeen'] ?? json['last_seen']),
     );
   }
 }

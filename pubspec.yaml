@@ -1,5 +1,5 @@
 name: whatsapp_clone
-description: A WhatsApp Clone with Voice/Video Calls, File Sharing, and Google Sign-In
+description: WhatsApp Clone — Voice/Video Calls, File Sharing, Real-time Messaging
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -15,13 +15,14 @@ dependencies:
   firebase_core: ^3.6.0
   firebase_auth: ^5.3.1
   firebase_messaging: ^15.1.3
+  cloud_firestore: ^5.4.4
   google_sign_in: ^6.2.1
 
   # Networking
   http: ^1.2.2
   web_socket_channel: ^3.0.1
 
-  # WebRTC (calls + screen share)
+  # WebRTC
   flutter_webrtc: ^0.12.6
 
   # Media
@@ -29,7 +30,6 @@ dependencies:
   file_picker: ^8.1.2
   video_player: ^2.9.1
   audioplayers: ^6.1.0
-  just_audio: ^0.9.42
 
   # Storage & Utils
   shared_preferences: ^2.3.2
@@ -39,25 +39,15 @@ dependencies:
   intl: ^0.19.0
   cached_network_image: ^3.4.1
   shimmer: ^3.0.0
-
-  # UI
   flutter_svg: ^2.0.10+1
-  lottie: ^3.1.3
 
-  # Local notifications
+  # Notifications
   flutter_local_notifications: ^17.2.3
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  flutter_launcher_icons: ^0.14.1
-
-flutter_launcher_icons:
-  android: true
-  ios: false
-  image_path: "assets/icon/app_icon.png"
-  min_sdk_android: 21
 
 flutter:
   uses-material-design: true
