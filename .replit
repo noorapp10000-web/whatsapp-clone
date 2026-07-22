@@ -24,17 +24,13 @@ author = "agent"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "cd server && npm install && node index.js"
-waitForPort = 5000
+waitForPort = 3000
 
 [workflows.workflow.metadata]
 outputType = "webview"
 
 [[ports]]
 localPort = 3000
-externalPort = 3000
-
-[[ports]]
-localPort = 5000
 externalPort = 80
 
 [userenv]

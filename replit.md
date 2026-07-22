@@ -1,89 +1,74 @@
-# WhatsApp Clone — Flutter + Node.js Backend
+# WhatsApp Clone — Replit Project
 
-## Project Overview
-
-Full-featured WhatsApp clone with:
-- Flutter mobile app (Android APK) — built via GitHub Actions CI/CD
-- Node.js + Express backend running on Replit
-- PostgreSQL database (Replit built-in)
-- Firebase Auth (Google Sign-In) + Firebase Cloud Messaging
-- Cloudinary for file/media uploads
-- WebSocket real-time messaging
-- WebRTC voice/video calls + screen sharing
+## Overview
+A full-featured WhatsApp clone with Flutter mobile app (Android APK) + Node.js backend running on Replit.
 
 ## Architecture
-
-| Component | Technology |
-|-----------|-----------|
-| Mobile app | Flutter 3.24 |
-| Backend | Node.js + Express (this Replit) |
-| Database | PostgreSQL (Replit built-in) |
+| Layer | Technology |
+|---|---|
+| Mobile | Flutter 3.24.x (Android APK) |
 | Auth | Firebase Auth (Google Sign-In) |
-| Realtime | WebSocket (`/ws` endpoint) |
-| Calls | WebRTC (flutter_webrtc) |
-| Storage | Cloudinary |
-| Notifications | Firebase Cloud Messaging |
-| CI/CD | GitHub Actions → APK artifacts |
+| Real-time | WebSocket (`/ws`) |
+| Calls | WebRTC (flutter_webrtc) with STUN/TURN |
+| Media | Cloudinary (image, video, file, voice upload) |
+| Notifications | Firebase Cloud Messaging (FCM v1) |
+| Backend | Node.js + Express (this Replit) |
+| Database | Cloud Firestore (Firebase) |
 
-## How to Run the Backend
+## Features
+- 🔐 Google Sign-In
+- 💬 Real-time messaging (WebSocket)
+- 📞 Voice calls (WebRTC, echo cancellation)
+- 📹 Video calls (WebRTC)
+- 🖥️ Screen sharing
+- 📁 File/image/video sharing (Cloudinary)
+- 🎤 Voice messages (record & playback)
+- 🔔 Push notifications (FCM)
+- 👥 Group chats
+- ✅ Message status (sent/delivered/read)
+- 😄 Emoji reactions (double-tap messages)
+- ⌨️ Typing indicators
+- 🟢 Online/offline status
+- 🎵 Listen Together — synchronized music listening with friends
+- 💬 Reply to messages
+- 🗑️ Delete messages
 
-```bash
+## Running the Backend
+The backend runs via the "Start Backend" workflow:
+```
 cd server && npm install && node index.js
 ```
 
-Or use the configured Replit workflow: **Start Backend**
+## Required Secrets (Replit)
+- `CLOUDINARY_CLOUD_NAME` — Cloudinary cloud name (set as env var)
+- `CLOUDINARY_API_KEY` — Cloudinary API key (secret)
+- `CLOUDINARY_API_SECRET` — Cloudinary API secret (secret)
+- `FIREBASE_SERVICE_ACCOUNT` — Firebase service account JSON (secret)
+- `FIREBASE_PROJECT_ID` — Firebase project ID (set as env var)
+- `SESSION_SECRET` — Session secret
 
-## Backend API
+## Required GitHub Secrets (for APK build)
+- `GOOGLE_SERVICES_JSON` — Contents of google-services.json ✅ (set)
+- `BACKEND_URL` — Replit backend HTTPS URL ✅ (set)
+- `BACKEND_WS_URL` — Replit backend WSS URL ✅ (set)
 
-Base URL: `https://<REPLIT_DEV_DOMAIN>/api`
+## APK Download
+After each push to `main`, GitHub Actions builds the APK automatically.
+Download from: https://github.com/noorapp10000-web/whatsapp-clone/releases
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | /api/auth/login | Register/login with Firebase token |
-| GET | /api/users/me | Get current user |
-| GET | /api/users/search?q= | Search users |
-| GET | /api/contacts | List contacts |
-| POST | /api/contacts | Add contact |
-| GET | /api/conversations | List conversations |
-| POST | /api/conversations | Create conversation |
-| GET | /api/conversations/:id/messages | Get messages |
-| POST | /api/conversations/:id/messages | Send message |
-| POST | /api/upload | Upload file to Cloudinary |
-| GET | /health | Health check |
+## Firebase Project
+- Project ID: whatsapp-clone-976d4
+- Package: com.whatsappclone.app
+- FCM Sender ID: 655621157294
 
-WebSocket: `wss://<REPLIT_DEV_DOMAIN>/ws?token=FIREBASE_ID_TOKEN`
-
-## GitHub Actions
-
-The CI/CD pipeline builds the APK on every push to `main`.
-
-### Required GitHub Secrets
-
-| Secret | Value |
-|--------|-------|
-| `GOOGLE_SERVICES_JSON` | Contents of `android/app/google-services.json` |
-| `BACKEND_URL` | `https://<REPLIT_DEV_DOMAIN>` |
-| `BACKEND_WS_URL` | `wss://<REPLIT_DEV_DOMAIN>` |
-
-### Required Replit Secrets (Backend)
-
-| Secret | Description |
-|--------|-------------|
-| `SESSION_SECRET` | ✅ Already set |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
-| `FIREBASE_SERVICE_ACCOUNT` | Firebase service account JSON (optional, for push notifications) |
-
-## Firebase Config
-
-- Project: `whatsapp-clone-976d4`
-- App ID: `1:655621157294:android:fcea2fc9a29c16db9d583f`
-- Sender ID: `655621157294`
-- Google Client ID: `655621157294-1jrptd26o877lf0k8kja898o9sd0300v.apps.googleusercontent.com`
+## Firestore Collections
+- `users` — User profiles
+- `conversations` — Chat conversations
+- `conversations/{id}/messages` — Messages subcollection
+- `calls` — Call logs
+- `listen_sessions` — Listen Together sessions
 
 ## User Preferences
-
-- Keep existing project structure (Flutter app root + server/ backend)
-- Use Replit built-in PostgreSQL
-- Backend runs on port 5000
+- Arabic language support in UI
+- WhatsApp-style green color (#00A884)
+- Echo cancellation on calls is critical
