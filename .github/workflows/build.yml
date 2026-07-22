@@ -65,6 +65,20 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
+      - name: Fix GeneratedPluginRegistrant missing Log import
+        run: |
+          FILE="android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java"
+          if [ -f "$FILE" ]; then
+            if ! grep -q "import android.util.Log" "$FILE"; then
+              sed -i 's/^package io\.flutter\.plugins;/package io.flutter.plugins;\nimport android.util.Log;/' "$FILE"
+              echo "✅ Patched: added import android.util.Log to GeneratedPluginRegistrant.java"
+            else
+              echo "⏭️  No patch needed — import already present"
+            fi
+          else
+            echo "⚠️  GeneratedPluginRegistrant.java not found — skipping patch"
+          fi
+
       - name: Build Debug APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
