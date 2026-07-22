@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-android:
     name: Build Android APK
@@ -29,13 +32,26 @@ jobs:
           channel: stable
           cache: false
 
-      - name: Install NDK 27 (required by flutter_webrtc)
+      - name: Verify Flutter SDK structure
+        run: |
+          echo "FLUTTER_ROOT=$FLUTTER_ROOT"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          echo ""
+          echo "=== Flutter tools/gradle ==="
+          ls "$FLUTTER_ROOT/packages/flutter_tools/gradle/" || echo "⚠️  MISSING flutter_tools/gradle!"
+          echo ""
+          echo "=== Pre-installed NDKs ==="
+          ls "$ANDROID_SDK_ROOT/ndk/" 2>/dev/null || echo "No NDK dirs found"
+          echo ""
+          echo "=== SDKManager cmdline-tools ==="
+          ls "$ANDROID_SDK_ROOT/cmdline-tools/" 2>/dev/null || echo "No cmdline-tools"
+
+      - name: Install NDK 27.0.12077973
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          echo "y" | "$SDKMANAGER" "ndk;27.0.12077973" 2>&1 | tail -5 || \
-          echo "y" | "$SDKMANAGER" "ndk;26.3.11579264" 2>&1 | tail -5
-          echo "Installed NDKs:"
-          ls "$ANDROID_SDK_ROOT/ndk/" 2>/dev/null || true
+          echo "y" | "$SDKMANAGER" "ndk;27.0.12077973"
+          echo "✅ NDK installed:"
+          ls "$ANDROID_SDK_ROOT/ndk/"
 
       - name: Write google-services.json
         run: |
@@ -57,11 +73,7 @@ jobs:
         run: |
           echo "flutter.sdk=$FLUTTER_ROOT" > android/local.properties
           echo "sdk.dir=$ANDROID_SDK_ROOT" >> android/local.properties
-          echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> android/local.properties
           cat android/local.properties
-
-      - name: Pre-cache Flutter engine artifacts
-        run: flutter precache --android
 
       - name: Get Flutter dependencies
         run: flutter pub get
@@ -71,14 +83,14 @@ jobs:
         continue-on-error: true
 
       - name: Build Debug APK
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
-        run: flutter build apk --debug --no-tree-shake-icons
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+          flutter build apk --debug --no-tree-shake-icons
 
       - name: Build Release APK
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.0.12077973
-        run: flutter build apk --release --no-tree-shake-icons
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.0.12077973"
+          flutter build apk --release --no-tree-shake-icons
         continue-on-error: true
 
       - name: Upload Debug APK
