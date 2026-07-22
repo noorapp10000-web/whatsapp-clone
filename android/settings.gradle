@@ -23,4 +23,21 @@ plugins {
     id "com.google.gms.google-services" version "4.4.2" apply false
 }
 
+// Apply Flutter plugin loader — registers all Flutter plugin Android projects
+// with Gradle at settings-evaluation time (required for AGP 8.x / Gradle 8.x)
+def localPropertiesFile = file("local.properties")
+def flutterSdkPath = null
+if (localPropertiesFile.exists()) {
+    def props = new Properties()
+    localPropertiesFile.withInputStream { props.load(it) }
+    flutterSdkPath = props.getProperty("flutter.sdk")
+}
+
+if (flutterSdkPath) {
+    def pluginLoader = new File("${flutterSdkPath}/packages/flutter_tools/gradle/app_plugin_loader.gradle")
+    if (pluginLoader.exists()) {
+        apply from: pluginLoader.absolutePath
+    }
+}
+
 include ":app"
