@@ -23,4 +23,23 @@ plugins {
     id "com.google.gms.google-services" version "4.4.2" apply false
 }
 
+// Flutter plugin loader — new declarative approach for Flutter 3.22+
+// Includes all Flutter plugin Android projects as Gradle subprojects
+def flutterProjectRoot = rootProject.projectDir.parentFile.toPath()
+def pluginsFile = new File("${flutterProjectRoot}/.flutter-plugins")
+if (pluginsFile.exists()) {
+    pluginsFile.eachLine { line ->
+        def pluginParts = line.split('=')
+        if (pluginParts.length == 2) {
+            def pluginName = pluginParts[0].trim()
+            def pluginPath = pluginParts[1].trim()
+            def androidDir = new File("${pluginPath}/android")
+            if (androidDir.exists()) {
+                include ":${pluginName}"
+                project(":${pluginName}").projectDir = androidDir
+            }
+        }
+    }
+}
+
 include ":app"
