@@ -27,7 +27,8 @@ dependencies:
 
   # Media
   image_picker: ^1.1.2
-  file_picker: ^8.1.2
+  # Upgraded from 8.x — fixes FlutterLifecycleAdapter removed in Flutter 3.29+
+  file_picker: ^11.0.0
   video_player: ^2.9.1
   audioplayers: ^6.1.0
 
