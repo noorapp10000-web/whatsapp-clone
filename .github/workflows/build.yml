@@ -126,6 +126,7 @@ jobs:
 
       - name: Build Debug APK
         run: |
+          set -o pipefail
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
           flutter build apk --debug --no-tree-shake-icons --verbose 2>&1 | tail -100
         env:
@@ -145,6 +146,7 @@ jobs:
           name: whatsapp-clone-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 30
+          if-no-files-found: error
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
