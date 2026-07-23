@@ -13,13 +13,30 @@ service cloud.firestore {
 
     // ─── Contact Requests ────────────────────────────────────────────────────
     match /contactRequests/{reqId} {
+      // Only the sender or recipient can read their own requests
       allow read: if isAuth() && (
         resource.data.fromUid == myUid() || resource.data.toUid == myUid()
       );
-      allow create: if isAuth() && request.resource.data.fromUid == myUid();
-      allow update: if isAuth() && (
-        resource.data.fromUid == myUid() || resource.data.toUid == myUid()
-      );
+
+      // Create: only the sender (fromUid == me), status MUST be 'pending',
+      // and toUid/fromUid/createdAt must be present and not self-request
+      allow create: if isAuth()
+        && request.resource.data.fromUid == myUid()
+        && request.resource.data.toUid != myUid()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.keys().hasAll(['fromUid', 'toUid', 'status', 'createdAt']);
+
+      // Update: ONLY the recipient may change status, and only to 'accepted' or 'rejected'.
+      // The immutable fields (fromUid, toUid, createdAt) must not change.
+      allow update: if isAuth()
+        && resource.data.toUid == myUid()
+        && resource.data.status == 'pending'
+        && request.resource.data.status in ['accepted', 'rejected']
+        && request.resource.data.fromUid == resource.data.fromUid
+        && request.resource.data.toUid == resource.data.toUid
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      // Delete: either participant can remove the request (e.g. cancel or unfriend)
       allow delete: if isAuth() && (
         resource.data.fromUid == myUid() || resource.data.toUid == myUid()
       );
