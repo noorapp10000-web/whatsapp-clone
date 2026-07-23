@@ -211,7 +211,7 @@ class _SearchScreenState extends State<SearchScreen> {
         context,
         MaterialPageRoute(
           builder: (_) => ContactInfoScreen(
-            uid: user.uid,
+            uid: user.id,
             myUid: widget.myUid,
           ),
         ));
