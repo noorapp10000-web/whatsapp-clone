@@ -124,34 +124,43 @@ jobs:
             echo "ℹ️  No files matched — file_picker may have already fixed this issue"
           fi
 
-      - name: Build Debug APK (Gradle direct)
+      - name: Build Debug APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          cd android
-          ./gradlew assembleDebug
+          # Run flutter build — AGP 8.11.1 builds the APK successfully but Flutter's
+          # tool can't find it at the expected path due to an output-copy bug.
+          # We allow it to "fail" then locate the APK ourselves in the next step.
+          flutter build apk --debug --no-tree-shake-icons 2>&1 || true
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Locate and stage Debug APK
         run: |
-          echo "=== Searching for debug APKs ==="
-          find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules
-          APK=$(find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules | head -1)
-          if [ -z "$APK" ]; then
-            echo "❌ No app-debug.apk found!"
-            exit 1
+          echo "=== APK search ==="
+          find build/ -name "*.apk" 2>/dev/null | grep -v intermediates | grep -v desugar || true
+          # Flutter-apk copy task sometimes doesn't run with newer AGP — find wherever Gradle put it
+          DEST=build/app/outputs/flutter-apk/app-debug.apk
+          if [ -f "$DEST" ]; then
+            echo "✅ APK already at expected path"
+          else
+            APK=$(find build/ -name "app-debug.apk" 2>/dev/null | grep -v intermediates | head -1)
+            if [ -z "$APK" ]; then
+              echo "❌ No app-debug.apk found anywhere under build/"
+              echo "=== Full build/ tree (apk files) ==="
+              find build/ -name "*.apk" 2>/dev/null
+              exit 1
+            fi
+            echo "✅ Found APK at: $APK"
+            mkdir -p "$(dirname $DEST)"
+            cp "$APK" "$DEST"
           fi
-          echo "✅ Found: $APK"
-          mkdir -p build/app/outputs/flutter-apk/
-          cp "$APK" build/app/outputs/flutter-apk/app-debug.apk
-          ls -lh build/app/outputs/flutter-apk/app-debug.apk
+          ls -lh "$DEST"
 
-      - name: Build Release APK (Gradle direct)
+      - name: Build Release APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          cd android
-          ./gradlew assembleRelease
-          RELA=$(find . -name "app-release-unsigned.apk" -o -name "app-release.apk" 2>/dev/null | grep -v node_modules | head -1)
+          flutter build apk --release --no-tree-shake-icons 2>&1 || true
+          RELA=$(find build/ \( -name "app-release.apk" -o -name "app-release-unsigned.apk" \) 2>/dev/null | grep -v intermediates | head -1)
           if [ -n "$RELA" ]; then
             mkdir -p build/app/outputs/flutter-apk/
             cp "$RELA" build/app/outputs/flutter-apk/app-release.apk
