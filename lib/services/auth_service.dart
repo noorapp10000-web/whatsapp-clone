@@ -4,11 +4,8 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'api_service.dart';
 
 class AuthService {
-  static final FirebaseAuth _auth = FirebaseAuth.instance;
-  static final GoogleSignIn _googleSignIn = GoogleSignIn(
-    clientId:
-        '655621157294-1jrptd26o877lf0k8kja898o9sd0300v.apps.googleusercontent.com',
-  );
+  static final _auth = FirebaseAuth.instance;
+  static final _googleSignIn = GoogleSignIn();
 
   static User? get currentUser => _auth.currentUser;
   static Stream<User?> get authStateChanges => _auth.authStateChanges();
@@ -31,13 +28,13 @@ class AuthService {
     final user = userCredential.user;
     if (user == null) return null;
 
-    // Get FCM token for push notifications
+    // Get FCM token
     String? fcmToken;
     try {
       fcmToken = await FirebaseMessaging.instance.getToken();
     } catch (_) {}
 
-    // Register/update user on our backend
+    // Register on backend
     try {
       await ApiService.login(
         displayName: user.displayName,

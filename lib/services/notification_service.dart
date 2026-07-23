@@ -1,58 +1,84 @@
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 class NotificationService {
   static const _channelId = 'whatsapp_clone_channel';
   static const _channelName = 'WhatsApp Clone';
+  static const _channelDesc = 'إشعارات الرسائل والمكالمات';
 
-  static Future<void> init(
-      FlutterLocalNotificationsPlugin plugin) async {
-    // Android initialization
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+  static Future<void> init(FlutterLocalNotificationsPlugin plugin) async {
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
-    await plugin.initialize(initSettings);
+
+    await plugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (details) {},
+    );
 
     // Create notification channel
     const channel = AndroidNotificationChannel(
       _channelId,
       _channelName,
-      description: 'Notifications for messages and calls',
+      description: _channelDesc,
       importance: Importance.max,
       playSound: true,
       enableVibration: true,
     );
+
     await plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
 
-    // Request permission
+    // FCM foreground messages
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final notification = message.notification;
+      if (notification != null) {
+        plugin.show(
+          notification.hashCode,
+          notification.title,
+          notification.body,
+          NotificationDetails(
+            android: AndroidNotificationDetails(
+              _channelId,
+              _channelName,
+              channelDescription: _channelDesc,
+              importance: Importance.max,
+              priority: Priority.high,
+              icon: '@mipmap/ic_launcher',
+            ),
+          ),
+        );
+      }
+    });
+
+    // Request permissions
     await FirebaseMessaging.instance.requestPermission(
       alert: true,
       badge: true,
       sound: true,
     );
+  }
 
-    // Foreground notification handling
-    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final notification = message.notification;
-      if (notification == null) return;
-      plugin.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId,
-            _channelName,
-            channelDescription: 'WhatsApp Clone notifications',
-            importance: Importance.max,
-            priority: Priority.high,
-            icon: '@mipmap/ic_launcher',
-          ),
+  static Future<void> showNotification(
+    FlutterLocalNotificationsPlugin plugin, {
+    required String title,
+    required String body,
+    int id = 0,
+  }) async {
+    await plugin.show(
+      id,
+      title,
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          _channelId,
+          _channelName,
+          channelDescription: _channelDesc,
+          importance: Importance.max,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
         ),
-      );
-    });
+      ),
+    );
   }
 }

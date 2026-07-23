@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../models/conversation_model.dart';
 import '../services/firestore_service.dart';
+import '../services/api_service.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'package:image_picker/image_picker.dart';
 import 'chat_screen.dart';
 
 class NewChatScreen extends StatefulWidget {
@@ -20,6 +24,9 @@ class _NewChatScreenState extends State<NewChatScreen>
   bool _loading = false;
   final _selectedForGroup = <UserModel>[];
   final _groupNameCtrl = TextEditingController();
+  final _groupDescCtrl = TextEditingController();
+  String? _groupPhotoUrl;
+  bool _creatingGroup = false;
 
   @override
   void initState() {
@@ -32,6 +39,7 @@ class _NewChatScreenState extends State<NewChatScreen>
     _tab.dispose();
     _ctrl.dispose();
     _groupNameCtrl.dispose();
+    _groupDescCtrl.dispose();
     super.dispose();
   }
 
@@ -42,354 +50,316 @@ class _NewChatScreenState extends State<NewChatScreen>
     }
     setState(() => _loading = true);
     try {
-      final users = await FirestoreService.searchUsers(q.trim(), widget.myUid);
-      if (mounted) setState(() => _results = users);
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      final results = await FirestoreService.searchUsers(q, widget.myUid);
+      setState(() { _results = results; _loading = false; });
+    } catch (_) {
+      setState(() => _loading = false);
     }
   }
 
-  Future<void> _openChat(UserModel user) async {
+  Future<void> _openDirectChat(UserModel user) async {
+    setState(() => _loading = true);
     try {
-      final conv = await FirestoreService.createDirectConversation(
-          widget.myUid, user.id);
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
+      final conv = await FirestoreService.createDirectConversation(widget.myUid, user.id);
+      if (mounted) {
+        Navigator.pushReplacement(context, MaterialPageRoute(
           builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
-        ),
-      );
-    } catch (_) {}
+        ));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    }
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _createGroup() async {
-    final name = _groupNameCtrl.text.trim();
-    if (name.isEmpty || _selectedForGroup.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('أدخل اسم المجموعة وأضف عضوًا على الأقل')),
-      );
-      return;
-    }
+    if (_groupNameCtrl.text.trim().isEmpty || _selectedForGroup.isEmpty) return;
+    setState(() => _creatingGroup = true);
     try {
       final conv = await FirestoreService.createGroupConversation(
         myUid: widget.myUid,
         memberUids: _selectedForGroup.map((u) => u.id).toList(),
-        name: name,
+        name: _groupNameCtrl.text.trim(),
+        photoUrl: _groupPhotoUrl,
+        description: _groupDescCtrl.text.trim().isEmpty ? null : _groupDescCtrl.text.trim(),
       );
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
-        ),
-      );
-    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('خطأ: $e')));
+        Navigator.pushReplacement(context, MaterialPageRoute(
+          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
+        ));
       }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
     }
+    if (mounted) setState(() => _creatingGroup = false);
+  }
+
+  Future<void> _pickGroupPhoto() async {
+    final p = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 80);
+    if (p == null) return;
+    try {
+      final bytes = await File(p.path).readAsBytes();
+      final result = await ApiService.uploadFile(
+        base64: 'data:image/jpeg;base64,${base64Encode(bytes)}',
+        mimeType: 'image/jpeg',
+        fileName: 'group_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      );
+      setState(() => _groupPhotoUrl = result['url'] as String?);
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF00A884),
-        foregroundColor: Colors.white,
-        title: const Text('محادثة جديدة',
-            style:
-                TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text('محادثة جديدة'),
         bottom: TabBar(
           controller: _tab,
-          indicatorColor: Colors.white,
+          tabs: const [
+            Tab(text: 'مباشرة'),
+            Tab(text: 'مجموعة'),
+          ],
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white60,
-          tabs: const [
-            Tab(icon: Icon(Icons.person), text: 'مباشر'),
-            Tab(icon: Icon(Icons.group), text: 'مجموعة جديدة'),
-          ],
+          indicatorColor: Colors.white,
         ),
       ),
       body: TabBarView(
         controller: _tab,
         children: [
-          // ── Direct chat ──
+          // Direct chat tab
           Column(
             children: [
-              Container(
-                color: const Color(0xFFF0FFF8),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline,
-                        color: Color(0xFF00A884), size: 16),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'ابحث بالاسم أو البريد الإلكتروني للعثور على مستخدم',
-                        style: TextStyle(
-                            color: Color(0xFF005C4B), fontSize: 12),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: TextField(
                   controller: _ctrl,
-                  textDirection: TextDirection.rtl,
                   onChanged: _search,
-                  autofocus: true,
                   decoration: InputDecoration(
-                    hintText: 'ابحث عن مستخدم...',
-                    prefixIcon: const Icon(Icons.search,
-                        color: Color(0xFF00A884)),
+                    hintText: 'ابحث بالاسم أو البريد الإلكتروني...',
+                    prefixIcon: const Icon(Icons.search, color: Color(0xFF00A884)),
                     suffixIcon: _ctrl.text.isNotEmpty
                         ? IconButton(
                             icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _ctrl.clear();
-                              setState(() => _results = []);
-                            })
+                            onPressed: () { _ctrl.clear(); setState(() => _results = []); })
                         : null,
                     filled: true,
-                    fillColor: const Color(0xFFF5F5F5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
-                    ),
+                    fillColor: Colors.grey.withOpacity(0.1),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
                   ),
                 ),
               ),
               if (_loading)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)))
+              else if (_results.isEmpty && _ctrl.text.length >= 2)
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.person_search, size: 64, color: Colors.grey[300]),
+                        const SizedBox(height: 12),
+                        Text('لا توجد نتائج', style: TextStyle(color: Colors.grey[500])),
+                      ],
+                    ),
+                  ),
+                )
+              else if (_results.isEmpty)
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.search, size: 64, color: Colors.grey[300]),
+                        const SizedBox(height: 12),
+                        Text('ابحث عن شخص للتواصل معه', style: TextStyle(color: Colors.grey[500])),
+                      ],
+                    ),
+                  ),
                 )
               else
                 Expanded(
-                  child: _results.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.people_outline,
-                                  size: 64, color: Colors.grey[300]),
-                              const SizedBox(height: 12),
-                              Text(
-                                _ctrl.text.length < 2
-                                    ? 'اكتب على الأقل حرفين للبحث'
-                                    : 'لا يوجد مستخدمون بهذا الاسم',
-                                style: TextStyle(color: Colors.grey[500]),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: _results.length,
-                          itemBuilder: (ctx, i) {
-                            final u = _results[i];
-                            return ListTile(
-                              leading: CircleAvatar(
-                                backgroundColor:
-                                    const Color(0xFF00A884).withOpacity(0.15),
-                                backgroundImage: u.photoUrl != null
-                                    ? NetworkImage(u.photoUrl!)
-                                    : null,
-                                child: u.photoUrl == null
-                                    ? Text(
-                                        u.displayName.isNotEmpty
-                                            ? u.displayName[0].toUpperCase()
-                                            : '?',
-                                        style: const TextStyle(
-                                            color: Color(0xFF00A884),
-                                            fontWeight: FontWeight.bold))
-                                    : null,
-                              ),
-                              title: Text(u.displayName,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600)),
-                              subtitle: Text(u.email,
-                                  style: TextStyle(
-                                      color: Colors.grey[500], fontSize: 12)),
-                              trailing: ElevatedButton.icon(
-                                onPressed: () => _openChat(u),
-                                icon: const Icon(Icons.chat, size: 16),
-                                label: const Text('مراسلة'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF00A884),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 6),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(20)),
-                                  textStyle: const TextStyle(fontSize: 12),
-                                ),
-                              ),
-                              onTap: () => _openChat(u),
-                            );
-                          },
+                  child: ListView.separated(
+                    itemCount: _results.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
+                    itemBuilder: (ctx, i) {
+                      final u = _results[i];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          radius: 24,
+                          backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
+                          backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
+                          child: u.photoUrl == null
+                              ? Text(u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
+                                  style: const TextStyle(color: Color(0xFF00A884), fontWeight: FontWeight.bold))
+                              : null,
                         ),
+                        title: Text(u.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text(u.email, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (u.isOnline)
+                              Container(
+                                width: 8,
+                                height: 8,
+                                margin: const EdgeInsets.only(right: 4),
+                                decoration: const BoxDecoration(color: Color(0xFF25D366), shape: BoxShape.circle),
+                              ),
+                            const Icon(Icons.chat_bubble_outline, color: Color(0xFF00A884), size: 20),
+                          ],
+                        ),
+                        onTap: () => _openDirectChat(u),
+                      );
+                    },
+                  ),
                 ),
             ],
           ),
 
-          // ── Group chat ──
+          // Group tab
           Column(
             children: [
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: TextField(
-                  controller: _groupNameCtrl,
-                  textDirection: TextDirection.rtl,
-                  decoration: InputDecoration(
-                    hintText: 'اسم المجموعة',
-                    prefixIcon:
-                        const Icon(Icons.group, color: Color(0xFF00A884)),
-                    filled: true,
-                    fillColor: const Color(0xFFF5F5F5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                child: TextField(
+                  controller: _ctrl,
                   onChanged: _search,
-                  textDirection: TextDirection.rtl,
                   decoration: InputDecoration(
-                    hintText: 'ابحث لإضافة أعضاء...',
-                    prefixIcon:
-                        const Icon(Icons.search, color: Color(0xFF00A884)),
+                    hintText: 'ابحث عن أعضاء المجموعة...',
+                    prefixIcon: const Icon(Icons.search, color: Color(0xFF00A884)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
                     filled: true,
-                    fillColor: const Color(0xFFF5F5F5),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
-                    ),
+                    fillColor: Colors.grey.withOpacity(0.1),
                   ),
                 ),
               ),
+              // Selected members chips
               if (_selectedForGroup.isNotEmpty)
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: SizedBox(
-                    height: 60,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: _selectedForGroup
-                          .map((u) => Padding(
-                                padding:
-                                    const EdgeInsets.only(left: 8),
-                                child: Column(
-                                  children: [
-                                    Stack(
-                                      children: [
-                                        CircleAvatar(
-                                          radius: 20,
-                                          backgroundColor: const Color(
-                                                  0xFF00A884)
-                                              .withOpacity(0.15),
-                                          child: Text(
-                                              u.displayName[0].toUpperCase(),
-                                              style: const TextStyle(
-                                                  color: Color(0xFF00A884),
-                                                  fontWeight: FontWeight.bold)),
-                                        ),
-                                        Positioned(
-                                          top: -2,
-                                          right: -2,
-                                          child: GestureDetector(
-                                            onTap: () => setState(() =>
-                                                _selectedForGroup.remove(u)),
-                                            child: const CircleAvatar(
-                                              radius: 8,
-                                              backgroundColor: Colors.red,
-                                              child: Icon(Icons.close,
-                                                  size: 10,
-                                                  color: Colors.white),
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Text(
-                                      u.displayName.split(' ').first,
-                                      style: const TextStyle(fontSize: 10),
-                                    ),
-                                  ],
-                                ),
-                              ))
-                          .toList(),
-                    ),
+                Container(
+                  height: 64,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: _selectedForGroup.map((u) => Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Chip(
+                        avatar: CircleAvatar(
+                          backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
+                          backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
+                          child: u.photoUrl == null
+                              ? Text(u.displayName[0].toUpperCase(), style: const TextStyle(fontSize: 10))
+                              : null,
+                        ),
+                        label: Text(u.displayName, style: const TextStyle(fontSize: 12)),
+                        deleteIcon: const Icon(Icons.close, size: 16),
+                        onDeleted: () => setState(() => _selectedForGroup.remove(u)),
+                        backgroundColor: const Color(0xFF00A884).withOpacity(0.1),
+                      ),
+                    )).toList(),
                   ),
                 ),
               Expanded(
-                child: ListView.builder(
-                  itemCount: _results.length,
-                  itemBuilder: (ctx, i) {
-                    final u = _results[i];
-                    final selected = _selectedForGroup.contains(u);
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            const Color(0xFF00A884).withOpacity(0.15),
-                        child: Text(u.displayName[0].toUpperCase(),
-                            style: const TextStyle(
-                                color: Color(0xFF00A884),
-                                fontWeight: FontWeight.bold)),
+                child: _results.isEmpty
+                    ? Center(child: Text('ابحث عن أعضاء للإضافة', style: TextStyle(color: Colors.grey[500])))
+                    : ListView.separated(
+                        itemCount: _results.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
+                        itemBuilder: (ctx, i) {
+                          final u = _results[i];
+                          final selected = _selectedForGroup.contains(u);
+                          return ListTile(
+                            leading: CircleAvatar(
+                              radius: 24,
+                              backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
+                              backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
+                              child: u.photoUrl == null
+                                  ? Text(u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
+                                      style: const TextStyle(color: Color(0xFF00A884), fontWeight: FontWeight.bold))
+                                  : null,
+                            ),
+                            title: Text(u.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            subtitle: Text(u.email),
+                            trailing: selected
+                                ? const Icon(Icons.check_circle, color: Color(0xFF00A884))
+                                : const Icon(Icons.circle_outlined, color: Colors.grey),
+                            onTap: () {
+                              setState(() {
+                                if (selected) _selectedForGroup.remove(u);
+                                else _selectedForGroup.add(u);
+                              });
+                            },
+                          );
+                        },
                       ),
-                      title: Text(u.displayName,
-                          style:
-                              const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: Text(u.email),
-                      trailing: selected
-                          ? const Icon(Icons.check_circle,
-                              color: Color(0xFF00A884))
-                          : const Icon(Icons.circle_outlined,
-                              color: Colors.grey),
-                      onTap: () {
-                        setState(() {
-                          if (selected) {
-                            _selectedForGroup.remove(u);
-                          } else {
-                            _selectedForGroup.add(u);
-                          }
-                        });
-                      },
-                    );
-                  },
-                ),
               ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.group_add),
-                    label: Text(
-                        'إنشاء مجموعة (${_selectedForGroup.length} أعضاء)'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00A884),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14)),
-                    ),
-                    onPressed:
-                        _selectedForGroup.isEmpty ? null : _createGroup,
+              if (_selectedForGroup.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    children: [
+                      // Group photo
+                      Row(
+                        children: [
+                          GestureDetector(
+                            onTap: _pickGroupPhoto,
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00A884).withOpacity(0.1),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: const Color(0xFF00A884).withOpacity(0.3)),
+                                image: _groupPhotoUrl != null
+                                    ? DecorationImage(image: NetworkImage(_groupPhotoUrl!), fit: BoxFit.cover)
+                                    : null,
+                              ),
+                              child: _groupPhotoUrl == null
+                                  ? const Icon(Icons.camera_alt, color: Color(0xFF00A884))
+                                  : null,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextField(
+                              controller: _groupNameCtrl,
+                              decoration: const InputDecoration(
+                                hintText: 'اسم المجموعة *',
+                                prefixIcon: Icon(Icons.group, color: Color(0xFF00A884)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _groupDescCtrl,
+                        decoration: const InputDecoration(
+                          hintText: 'وصف المجموعة (اختياري)',
+                          prefixIcon: Icon(Icons.info_outline, color: Color(0xFF00A884)),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          icon: _creatingGroup
+                              ? const SizedBox(width: 18, height: 18,
+                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                              : const Icon(Icons.group_add),
+                          label: Text('إنشاء مجموعة (${_selectedForGroup.length} أعضاء)'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00A884),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                          ),
+                          onPressed: _creatingGroup || _groupNameCtrl.text.trim().isEmpty ? null : _createGroup,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
             ],
           ),
         ],

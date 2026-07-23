@@ -1,129 +1,173 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'poll_model.dart';
+
 class MessageModel {
   final String id;
   final String conversationId;
   final String senderId;
-  final String type; // text, image, video, audio, voice, file, listen_together
-  final String? content;
-  final String? fileUrl;
-  final String? fileName;
-  final int? fileSize;
-  final String? mimeType;
-  final String? replyToId;
-  final DateTime createdAt;
   final String? senderName;
   final String? senderPhoto;
-  final String status;
-  final Map<String, String>? reactions; // uid → emoji
-  final int? durationMs; // for voice/audio
-
-  // Listen Together fields
-  final String? ltSessionId;
-  final String? ltUrl;
-  final String? ltTitle;
-  final List<Map<String, dynamic>>? ltPlaylist;
+  final String type; // text|image|video|audio|file|listen_together|poll|location|contact|system
+  final String? text;
+  final String? fileUrl;
+  final String? fileName;
+  final String? mimeType;
+  final int? fileSize;
+  final String? sessionId;
+  final String? replyToId;
+  final String? replyToText;
+  final String? replyToSender;
+  final DateTime createdAt;
+  final Map<String, dynamic>? readBy;
+  final bool deleted;
+  final bool isEdited;
+  final String? editedText;
+  final Map<String, String>? reactions;
+  final bool isStarred;
+  final bool isPinned;
+  final String? forwardedFrom;
+  final int? disappearAfterSeconds;
+  final PollModel? poll;
+  final Map<String, dynamic>? location; // {lat, lng, address}
+  final Map<String, dynamic>? contact; // {name, phone, email}
+  final String? thumbnailUrl;
 
   MessageModel({
     required this.id,
     required this.conversationId,
     required this.senderId,
-    required this.type,
-    this.content,
-    this.fileUrl,
-    this.fileName,
-    this.fileSize,
-    this.mimeType,
-    this.replyToId,
-    required this.createdAt,
     this.senderName,
     this.senderPhoto,
-    this.status = 'sent',
+    required this.type,
+    this.text,
+    this.fileUrl,
+    this.fileName,
+    this.mimeType,
+    this.fileSize,
+    this.sessionId,
+    this.replyToId,
+    this.replyToText,
+    this.replyToSender,
+    required this.createdAt,
+    this.readBy,
+    this.deleted = false,
+    this.isEdited = false,
+    this.editedText,
     this.reactions,
-    this.durationMs,
-    this.ltSessionId,
-    this.ltUrl,
-    this.ltTitle,
-    this.ltPlaylist,
+    this.isStarred = false,
+    this.isPinned = false,
+    this.forwardedFrom,
+    this.disappearAfterSeconds,
+    this.poll,
+    this.location,
+    this.contact,
+    this.thumbnailUrl,
   });
 
-  static DateTime _ts(dynamic v) {
-    if (v == null) return DateTime.now();
-    if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
-    try {
-      return (v as dynamic).toDate() as DateTime;
-    } catch (_) {
-      return DateTime.now();
+  String get displayText {
+    if (deleted) return '🚫 تم حذف هذه الرسالة';
+    if (isEdited && editedText != null) return editedText!;
+    if (text != null) return text!;
+    switch (type) {
+      case 'image': return '📷 صورة';
+      case 'video': return '🎥 فيديو';
+      case 'audio': return '🎤 رسالة صوتية';
+      case 'file': return '📎 ${fileName ?? "ملف"}';
+      case 'listen_together': return '🎵 استماع معاً';
+      case 'poll': return '📊 ${poll?.question ?? "استطلاع"}';
+      case 'location': return '📍 موقع';
+      case 'contact': return '👤 ${contact?['name'] ?? "جهة اتصال"}';
+      case 'system': return text ?? '';
+      default: return '';
     }
   }
 
+  static DateTime _parseTs(dynamic v) {
+    if (v == null) return DateTime.now();
+    if (v is Timestamp) return v.toDate();
+    if (v is String) return DateTime.tryParse(v) ?? DateTime.now();
+    return DateTime.now();
+  }
+
   factory MessageModel.fromJson(Map<String, dynamic> json) {
-    final reactionsRaw = json['reactions'];
-    Map<String, String>? reactions;
-    if (reactionsRaw is Map) {
-      reactions = reactionsRaw.map((k, v) => MapEntry(k.toString(), v.toString()));
+    PollModel? poll;
+    if (json['poll'] != null) {
+      try { poll = PollModel.fromJson(json['poll'] as Map<String, dynamic>); } catch (_) {}
     }
-
-    final ltPlaylistRaw = json['ltPlaylist'];
-    List<Map<String, dynamic>>? ltPlaylist;
-    if (ltPlaylistRaw is List) {
-      ltPlaylist = ltPlaylistRaw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-    }
-
     return MessageModel(
-      id: (json['id'] ?? '') as String,
-      conversationId:
-          (json['conversationId'] ?? json['conversation_id'] ?? '').toString(),
-      senderId:
-          (json['senderId'] ?? json['sender_id'] ?? '').toString(),
-      type: (json['type'] as String? ?? 'text'),
-      content: json['content'] as String?,
-      fileUrl: (json['fileUrl'] ?? json['file_url']) as String?,
-      fileName: (json['fileName'] ?? json['file_name']) as String?,
-      fileSize: (json['fileSize'] ?? json['file_size']) as int?,
-      mimeType: (json['mimeType'] ?? json['mime_type']) as String?,
-      replyToId:
-          (json['replyToId'] ?? json['reply_to_id'])?.toString(),
-      createdAt: _ts(json['createdAt'] ?? json['created_at']),
-      senderName: (json['senderName'] ?? json['sender_name']) as String?,
-      senderPhoto:
-          (json['senderPhoto'] ?? json['sender_photo']) as String?,
-      status: (json['status'] as String? ?? 'sent'),
-      reactions: reactions,
-      durationMs: json['durationMs'] as int?,
-      ltSessionId: json['ltSessionId'] as String?,
-      ltUrl: json['ltUrl'] as String?,
-      ltTitle: json['ltTitle'] as String?,
-      ltPlaylist: ltPlaylist,
+      id: json['id'] as String? ?? '',
+      conversationId: json['conversationId'] as String? ?? '',
+      senderId: json['senderId'] as String? ?? '',
+      senderName: json['senderName'] as String?,
+      senderPhoto: json['senderPhoto'] as String?,
+      type: json['type'] as String? ?? 'text',
+      text: json['text'] as String?,
+      fileUrl: json['fileUrl'] as String?,
+      fileName: json['fileName'] as String?,
+      mimeType: json['mimeType'] as String?,
+      fileSize: json['fileSize'] as int?,
+      sessionId: json['sessionId'] as String?,
+      replyToId: json['replyToId'] as String?,
+      replyToText: json['replyToText'] as String?,
+      replyToSender: json['replyToSender'] as String?,
+      createdAt: _parseTs(json['createdAt']),
+      readBy: json['readBy'] as Map<String, dynamic>?,
+      deleted: json['deleted'] as bool? ?? false,
+      isEdited: json['isEdited'] as bool? ?? false,
+      editedText: json['editedText'] as String?,
+      reactions: json['reactions'] != null
+          ? Map<String, String>.from(json['reactions'] as Map)
+          : null,
+      isStarred: json['isStarred'] as bool? ?? false,
+      isPinned: json['isPinned'] as bool? ?? false,
+      forwardedFrom: json['forwardedFrom'] as String?,
+      disappearAfterSeconds: json['disappearAfterSeconds'] as int?,
+      poll: poll,
+      location: json['location'] as Map<String, dynamic>?,
+      contact: json['contact'] as Map<String, dynamic>?,
+      thumbnailUrl: json['thumbnailUrl'] as String?,
     );
   }
 
   MessageModel copyWith({
-    String? status,
+    bool? deleted,
+    bool? isEdited,
+    String? editedText,
     Map<String, String>? reactions,
+    bool? isStarred,
+    bool? isPinned,
+    PollModel? poll,
   }) {
     return MessageModel(
       id: id,
       conversationId: conversationId,
       senderId: senderId,
-      type: type,
-      content: content,
-      fileUrl: fileUrl,
-      fileName: fileName,
-      fileSize: fileSize,
-      mimeType: mimeType,
-      replyToId: replyToId,
-      createdAt: createdAt,
       senderName: senderName,
       senderPhoto: senderPhoto,
-      status: status ?? this.status,
+      type: type,
+      text: text,
+      fileUrl: fileUrl,
+      fileName: fileName,
+      mimeType: mimeType,
+      fileSize: fileSize,
+      sessionId: sessionId,
+      replyToId: replyToId,
+      replyToText: replyToText,
+      replyToSender: replyToSender,
+      createdAt: createdAt,
+      readBy: readBy,
+      deleted: deleted ?? this.deleted,
+      isEdited: isEdited ?? this.isEdited,
+      editedText: editedText ?? this.editedText,
       reactions: reactions ?? this.reactions,
-      durationMs: durationMs,
-      ltSessionId: ltSessionId,
-      ltUrl: ltUrl,
-      ltTitle: ltTitle,
-      ltPlaylist: ltPlaylist,
+      isStarred: isStarred ?? this.isStarred,
+      isPinned: isPinned ?? this.isPinned,
+      forwardedFrom: forwardedFrom,
+      disappearAfterSeconds: disappearAfterSeconds,
+      poll: poll ?? this.poll,
+      location: location,
+      contact: contact,
+      thumbnailUrl: thumbnailUrl,
     );
   }
 }

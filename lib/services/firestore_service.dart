@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/conversation_model.dart';
 import '../models/message_model.dart';
 import '../models/user_model.dart';
+import '../models/status_model.dart';
+import '../models/poll_model.dart';
 
 class FirestoreService {
   static final _db = FirebaseFirestore.instance;
@@ -13,9 +15,16 @@ class FirestoreService {
     return UserModel.fromJson({'id': doc.id, ...doc.data()!});
   }
 
+  static Stream<UserModel?> userStream(String uid) {
+    return _db.collection('users').doc(uid).snapshots().map((doc) {
+      if (!doc.exists) return null;
+      return UserModel.fromJson({'id': doc.id, ...doc.data()!});
+    });
+  }
+
   static Future<List<UserModel>> searchUsers(String q, String myUid) async {
     if (q.trim().length < 2) return [];
-    final snap = await _db.collection('users').limit(200).get();
+    final snap = await _db.collection('users').limit(300).get();
     final qLow = q.toLowerCase();
     final results = <UserModel>[];
     for (final doc in snap.docs) {
@@ -23,9 +32,10 @@ class FirestoreService {
       final data = doc.data();
       final name = (data['displayName'] ?? '').toString().toLowerCase();
       final email = (data['email'] ?? '').toString().toLowerCase();
-      if (name.contains(qLow) || email.contains(qLow)) {
+      final phone = (data['phone'] ?? '').toString();
+      if (name.contains(qLow) || email.contains(qLow) || phone.contains(q)) {
         results.add(UserModel.fromJson({'id': doc.id, ...data}));
-        if (results.length >= 20) break;
+        if (results.length >= 30) break;
       }
     }
     return results;
@@ -38,6 +48,42 @@ class FirestoreService {
     });
   }
 
+  static Future<void> updateUserProfile(String uid, {
+    String? displayName,
+    String? status,
+    String? photoUrl,
+    String? phone,
+    Map<String, dynamic>? privacySettings,
+  }) async {
+    final updates = <String, dynamic>{
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (displayName != null) updates['displayName'] = displayName;
+    if (status != null) updates['status'] = status;
+    if (photoUrl != null) updates['photoUrl'] = photoUrl;
+    if (phone != null) updates['phone'] = phone;
+    if (privacySettings != null) updates['privacySettings'] = privacySettings;
+    await _db.collection('users').doc(uid).update(updates);
+  }
+
+  // Block / Unblock
+  static Future<void> blockUser(String myUid, String targetUid) async {
+    await _db.collection('users').doc(myUid).update({
+      'blockedUsers': FieldValue.arrayUnion([targetUid]),
+    });
+  }
+
+  static Future<void> unblockUser(String myUid, String targetUid) async {
+    await _db.collection('users').doc(myUid).update({
+      'blockedUsers': FieldValue.arrayRemove([targetUid]),
+    });
+  }
+
+  static Future<List<String>> getBlockedUsers(String myUid) async {
+    final doc = await _db.collection('users').doc(myUid).get();
+    return List<String>.from(doc.data()?['blockedUsers'] as List? ?? []);
+  }
+
   // ─── Conversations ────────────────────────────────────────────────────────
   static Stream<List<ConversationModel>> conversationsStream(String myUid) {
     return _db
@@ -46,8 +92,7 @@ class FirestoreService {
         .orderBy('lastMessageAt', descending: true)
         .snapshots()
         .map((snap) => snap.docs
-            .map((doc) =>
-                ConversationModel.fromJson({'id': doc.id, ...doc.data()}))
+            .map((doc) => ConversationModel.fromJson({'id': doc.id, ...doc.data()}))
             .toList());
   }
 
@@ -58,18 +103,15 @@ class FirestoreService {
         .where('type', isEqualTo: 'direct')
         .where('participantIds', arrayContains: myUid)
         .get();
-
     for (final doc in existing.docs) {
       final ids = List<String>.from(doc.data()['participantIds'] ?? []);
       if (ids.contains(otherUid)) {
         return ConversationModel.fromJson({'id': doc.id, ...doc.data()});
       }
     }
-
     final myDoc = await _db.collection('users').doc(myUid).get();
     final otherDoc = await _db.collection('users').doc(otherUid).get();
     final now = Timestamp.now();
-
     final ref = await _db.collection('conversations').add({
       'type': 'direct',
       'participantIds': [myUid, otherUid],
@@ -80,6 +122,10 @@ class FirestoreService {
       'lastMessageAt': now,
       'createdAt': now,
       'createdBy': myUid,
+      'isArchived': false,
+      'isMuted': false,
+      'pinnedMessageIds': [],
+      'blockedBy': [],
     });
     final convDoc = await ref.get();
     return ConversationModel.fromJson({'id': convDoc.id, ...convDoc.data()!});
@@ -90,16 +136,17 @@ class FirestoreService {
     required List<String> memberUids,
     required String name,
     String? photoUrl,
+    String? description,
   }) async {
     final allUids = [myUid, ...memberUids];
     final participantDocs = await Future.wait(
         allUids.map((uid) => _db.collection('users').doc(uid).get()));
-
     final now = Timestamp.now();
     final ref = await _db.collection('conversations').add({
       'type': 'group',
       'name': name,
       if (photoUrl != null) 'groupPhotoUrl': photoUrl,
+      if (description != null) 'description': description,
       'participantIds': allUids,
       'participants': participantDocs
           .map((d) => {'uid': d.id, ...d.data() ?? {}})
@@ -108,9 +155,90 @@ class FirestoreService {
       'lastMessageAt': now,
       'createdAt': now,
       'createdBy': myUid,
+      'isArchived': false,
+      'isMuted': false,
+      'onlyAdminsCanMessage': false,
+      'pinnedMessageIds': [],
+      'blockedBy': [],
+    });
+    // System message
+    await ref.collection('messages').add({
+      'type': 'system',
+      'text': 'تم إنشاء المجموعة "$name"',
+      'senderId': myUid,
+      'conversationId': ref.id,
+      'createdAt': now,
+      'deleted': false,
     });
     final convDoc = await ref.get();
     return ConversationModel.fromJson({'id': convDoc.id, ...convDoc.data()!});
+  }
+
+  static Future<void> updateConversation(String convId, Map<String, dynamic> data) async {
+    await _db.collection('conversations').doc(convId).update(data);
+  }
+
+  static Future<void> archiveConversation(String convId, bool archive) async {
+    await _db.collection('conversations').doc(convId).update({'isArchived': archive});
+  }
+
+  static Future<void> muteConversation(String convId, bool mute, {DateTime? until}) async {
+    await _db.collection('conversations').doc(convId).update({
+      'isMuted': mute,
+      if (until != null) 'mutedUntil': Timestamp.fromDate(until),
+    });
+  }
+
+  static Future<void> setDisappearingMessages(String convId, int? seconds) async {
+    await _db.collection('conversations').doc(convId).update({
+      'disappearingSeconds': seconds,
+    });
+  }
+
+  static Future<void> setChatWallpaper(String convId, String? wallpaper) async {
+    await _db.collection('conversations').doc(convId).update({'wallpaper': wallpaper});
+  }
+
+  static Future<void> pinMessage(String convId, String msgId, bool pin) async {
+    await _db.collection('conversations').doc(convId).update({
+      'pinnedMessageIds': pin
+          ? FieldValue.arrayUnion([msgId])
+          : FieldValue.arrayRemove([msgId]),
+    });
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({'isPinned': pin});
+  }
+
+  static Future<void> addGroupMember(String convId, String uid) async {
+    final userDoc = await _db.collection('users').doc(uid).get();
+    await _db.collection('conversations').doc(convId).update({
+      'participantIds': FieldValue.arrayUnion([uid]),
+      'participants': FieldValue.arrayUnion([{'uid': uid, ...userDoc.data() ?? {}}]),
+    });
+  }
+
+  static Future<void> removeGroupMember(String convId, String uid) async {
+    final convDoc = await _db.collection('conversations').doc(convId).get();
+    final participants = List<Map<String, dynamic>>.from(
+        (convDoc.data()?['participants'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)));
+    final updated = participants.where((p) => (p['uid'] ?? '') != uid).toList();
+    await _db.collection('conversations').doc(convId).update({
+      'participantIds': FieldValue.arrayRemove([uid]),
+      'participants': updated,
+      'adminIds': FieldValue.arrayRemove([uid]),
+    });
+  }
+
+  static Future<void> promoteToAdmin(String convId, String uid) async {
+    await _db.collection('conversations').doc(convId).update({
+      'adminIds': FieldValue.arrayUnion([uid]),
+    });
+  }
+
+  static Future<void> demoteAdmin(String convId, String uid) async {
+    await _db.collection('conversations').doc(convId).update({
+      'adminIds': FieldValue.arrayRemove([uid]),
+    });
   }
 
   // ─── Messages ─────────────────────────────────────────────────────────────
@@ -122,229 +250,325 @@ class FirestoreService {
         .orderBy('createdAt', descending: false)
         .snapshots()
         .map((snap) => snap.docs
-            .map((doc) => MessageModel.fromJson(
-                {'id': doc.id, 'conversationId': convId, ...doc.data()}))
+            .map((doc) => MessageModel.fromJson({'id': doc.id, ...doc.data()}))
             .toList());
   }
 
   static Future<String> sendMessage(
     String convId,
-    String senderUid, {
-    required String type,
-    String? content,
+    String senderId, {
+    String type = 'text',
+    String? text,
     String? fileUrl,
     String? fileName,
-    int? fileSize,
     String? mimeType,
+    int? fileSize,
+    String? sessionId,
     String? replyToId,
-    int? durationMs,
-    // Listen Together
-    String? ltSessionId,
-    String? ltUrl,
-    String? ltTitle,
-    List<Map<String, dynamic>>? ltPlaylist,
+    String? replyToText,
+    String? replyToSender,
+    String? senderName,
+    String? senderPhoto,
+    int? disappearAfterSeconds,
+    PollModel? poll,
+    Map<String, dynamic>? location,
+    Map<String, dynamic>? contact,
+    String? forwardedFrom,
+    String? thumbnailUrl,
   }) async {
-    final now = FieldValue.serverTimestamp();
-    final msgRef = _db
+    final now = Timestamp.now();
+    final msgData = <String, dynamic>{
+      'conversationId': convId,
+      'senderId': senderId,
+      if (senderName != null) 'senderName': senderName,
+      if (senderPhoto != null) 'senderPhoto': senderPhoto,
+      'type': type,
+      if (text != null) 'text': text,
+      if (fileUrl != null) 'fileUrl': fileUrl,
+      if (fileName != null) 'fileName': fileName,
+      if (mimeType != null) 'mimeType': mimeType,
+      if (fileSize != null) 'fileSize': fileSize,
+      if (sessionId != null) 'sessionId': sessionId,
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSender != null) 'replyToSender': replyToSender,
+      if (forwardedFrom != null) 'forwardedFrom': forwardedFrom,
+      if (disappearAfterSeconds != null) 'disappearAfterSeconds': disappearAfterSeconds,
+      if (poll != null) 'poll': poll.toJson(),
+      if (location != null) 'location': location,
+      if (contact != null) 'contact': contact,
+      if (thumbnailUrl != null) 'thumbnailUrl': thumbnailUrl,
+      'createdAt': now,
+      'deleted': false,
+      'isEdited': false,
+      'isStarred': false,
+      'isPinned': false,
+      'reactions': {},
+    };
+    final ref = await _db
         .collection('conversations')
         .doc(convId)
         .collection('messages')
-        .doc();
+        .add(msgData);
 
-    await msgRef.set({
-      'senderId': senderUid,
-      'type': type,
-      if (content != null) 'content': content,
-      if (fileUrl != null) 'fileUrl': fileUrl,
-      if (fileName != null) 'fileName': fileName,
-      if (fileSize != null) 'fileSize': fileSize,
-      if (mimeType != null) 'mimeType': mimeType,
-      if (replyToId != null) 'replyToId': replyToId,
-      if (durationMs != null) 'durationMs': durationMs,
-      if (ltSessionId != null) 'ltSessionId': ltSessionId,
-      if (ltUrl != null) 'ltUrl': ltUrl,
-      if (ltTitle != null) 'ltTitle': ltTitle,
-      if (ltPlaylist != null) 'ltPlaylist': ltPlaylist,
-      'status': 'sent',
-      'createdAt': now,
-    });
-
-    await _db.collection('conversations').doc(convId).update({
-      'lastMessage': {
-        'id': msgRef.id,
-        'content': content ??
-            (type == 'voice'
-                ? '🎤 Voice message'
-                : type == 'listen_together'
-                    ? '🎵 Listen Together: ${ltTitle ?? 'Music'}'
-                    : fileName ?? ''),
-        'type': type,
-        'senderId': senderUid,
-        'createdAt': DateTime.now().toIso8601String(),
-      },
+    // Update conversation last message
+    final convRef = _db.collection('conversations').doc(convId);
+    final convDoc = await convRef.get();
+    final participantIds = List<String>.from(convDoc.data()?['participantIds'] as List? ?? []);
+    final unreadUpdates = <String, dynamic>{};
+    for (final uid in participantIds) {
+      if (uid != senderId) {
+        unreadUpdates['unreadCounts.$uid'] = FieldValue.increment(1);
+      }
+    }
+    await convRef.update({
+      'lastMessage': text ?? _typeEmoji(type),
+      'lastMessageType': type,
+      'lastMessageSenderId': senderId,
       'lastMessageAt': now,
+      ...unreadUpdates,
     });
 
-    return msgRef.id;
+    return ref.id;
+  }
+
+  static String _typeEmoji(String type) {
+    switch (type) {
+      case 'image': return '📷 صورة';
+      case 'video': return '🎥 فيديو';
+      case 'audio': return '🎤 رسالة صوتية';
+      case 'file': return '📎 ملف';
+      case 'poll': return '📊 استطلاع';
+      case 'location': return '📍 موقع';
+      case 'contact': return '👤 جهة اتصال';
+      default: return '';
+    }
   }
 
   static Future<void> markMessagesRead(String convId, String myUid) async {
+    await _db.collection('conversations').doc(convId).update({
+      'unreadCounts.$myUid': 0,
+    });
     final unread = await _db
         .collection('conversations')
         .doc(convId)
         .collection('messages')
-        .where('senderId', isNotEqualTo: myUid)
-        .where('status', isEqualTo: 'sent')
-        .limit(30)
+        .where('readBy.$myUid', isEqualTo: null)
+        .limit(100)
         .get();
-
     final batch = _db.batch();
     for (final doc in unread.docs) {
-      batch.update(doc.reference, {'status': 'read'});
+      if ((doc.data()['senderId'] ?? '') != myUid) {
+        batch.update(doc.reference, {'readBy.$myUid': Timestamp.now()});
+      }
     }
     await batch.commit();
   }
 
-  static Future<void> addReaction(
-      String convId, String msgId, String myUid, String emoji) async {
-    await _db
-        .collection('conversations')
-        .doc(convId)
-        .collection('messages')
-        .doc(msgId)
-        .update({'reactions.$myUid': emoji});
+  static Future<void> deleteMessage(String convId, String msgId, {bool forEveryone = false}) async {
+    if (forEveryone) {
+      await _db.collection('conversations').doc(convId)
+          .collection('messages').doc(msgId).update({
+        'deleted': true,
+        'text': null,
+        'fileUrl': null,
+      });
+    } else {
+      await _db.collection('conversations').doc(convId)
+          .collection('messages').doc(msgId).update({
+        'deletedFor': FieldValue.arrayUnion([]), // soft delete per user
+      });
+    }
   }
 
-  static Future<void> removeReaction(
-      String convId, String msgId, String myUid) async {
-    await _db
-        .collection('conversations')
-        .doc(convId)
-        .collection('messages')
-        .doc(msgId)
-        .update({'reactions.$myUid': FieldValue.delete()});
-  }
-
-  static Future<void> deleteMessage(String convId, String msgId) async {
-    await _db
-        .collection('conversations')
-        .doc(convId)
-        .collection('messages')
-        .doc(msgId)
-        .delete();
-  }
-
-  // ─── Listen Together Sessions ─────────────────────────────────────────────
-  static Future<String> createListenSession({
-    required String creatorUid,
-    required List<String> participantUids,
-    required List<Map<String, dynamic>> playlist,
-  }) async {
-    final ref = await _db.collection('listen_sessions').add({
-      'creatorUid': creatorUid,
-      'participants': [creatorUid, ...participantUids],
-      'playlist': playlist,
-      'currentIndex': 0,
-      'isPlaying': false,
-      'positionMs': 0,
-      'status': 'pending',
-      'createdAt': FieldValue.serverTimestamp(),
-      'lastUpdatedAt': FieldValue.serverTimestamp(),
-      'lastUpdatedBy': creatorUid,
-    });
-    return ref.id;
-  }
-
-  static Future<void> updateListenSession(
-      String sessionId, Map<String, dynamic> data, String updaterUid) async {
-    await _db.collection('listen_sessions').doc(sessionId).update({
-      ...data,
-      'lastUpdatedAt': FieldValue.serverTimestamp(),
-      'lastUpdatedBy': updaterUid,
+  static Future<void> editMessage(String convId, String msgId, String newText) async {
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({
+      'isEdited': true,
+      'editedText': newText,
+      'editedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  static Stream<Map<String, dynamic>?> listenSessionStream(String sessionId) {
+  static Future<void> reactToMessage(
+      String convId, String msgId, String uid, String emoji) async {
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({
+      'reactions.$uid': emoji,
+    });
+  }
+
+  static Future<void> removeReaction(String convId, String msgId, String uid) async {
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({
+      'reactions.$uid': FieldValue.delete(),
+    });
+  }
+
+  static Future<void> starMessage(String convId, String msgId, bool star) async {
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({'isStarred': star});
+  }
+
+  static Stream<List<MessageModel>> starredMessagesStream(String myUid) {
+    // We search starred messages across all conversations the user is in
     return _db
-        .collection('listen_sessions')
-        .doc(sessionId)
+        .collectionGroup('messages')
+        .where('isStarred', isEqualTo: true)
+        .where('senderId', isEqualTo: myUid)
+        .orderBy('createdAt', descending: true)
+        .limit(100)
         .snapshots()
-        .map((doc) => doc.exists ? {'id': doc.id, ...doc.data()!} : null);
+        .map((snap) => snap.docs
+            .map((doc) => MessageModel.fromJson({'id': doc.id, ...doc.data()}))
+            .toList());
+  }
+
+  static Future<void> votePoll(
+      String convId, String msgId, int optionIndex, String uid) async {
+    // Remove vote from all options first, then add
+    final msgDoc = await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).get();
+    final pollData = msgDoc.data()?['poll'] as Map<String, dynamic>?;
+    if (pollData == null) return;
+    final options = List<Map<String, dynamic>>.from(
+        (pollData['options'] as List).map((o) => Map<String, dynamic>.from(o as Map)));
+    for (int i = 0; i < options.length; i++) {
+      final votes = List<String>.from(options[i]['votes'] as List? ?? []);
+      votes.remove(uid);
+      if (i == optionIndex) votes.add(uid);
+      options[i] = {...options[i], 'votes': votes};
+    }
+    await _db.collection('conversations').doc(convId)
+        .collection('messages').doc(msgId).update({
+      'poll.options': options,
+    });
   }
 
   // ─── Calls ────────────────────────────────────────────────────────────────
+  static Stream<List<Map<String, dynamic>>> callsStream(String myUid) {
+    return _db
+        .collection('calls')
+        .where('participants', arrayContains: myUid)
+        .orderBy('createdAt', descending: true)
+        .limit(100)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((doc) => {'id': doc.id, ...doc.data()})
+            .toList());
+  }
+
   static Future<String> logCall(
-      String callerId, String receiverId, String type) async {
+      String callerUid, String calleeUid, String type) async {
     final ref = await _db.collection('calls').add({
-      'callerId': callerId,
-      'receiverId': receiverId,
+      'callerUid': callerUid,
+      'calleeUid': calleeUid,
+      'participants': [callerUid, calleeUid],
       'type': type,
       'status': 'calling',
-      'participantIds': [callerId, receiverId],
-      'startedAt': FieldValue.serverTimestamp(),
+      'createdAt': FieldValue.serverTimestamp(),
     });
     return ref.id;
   }
 
-  static Future<void> updateCall(String callId, String status) async {
-    await _db.collection('calls').doc(callId).update({
-      'status': status,
-      if (['ended', 'rejected', 'missed'].contains(status))
-        'endedAt': FieldValue.serverTimestamp(),
+  static Future<void> updateCallStatus(String callId, String status, {int? durationSeconds}) async {
+    final updates = <String, dynamic>{'status': status};
+    if (durationSeconds != null) updates['durationSeconds'] = durationSeconds;
+    if (status == 'ended' || status == 'missed') {
+      updates['endedAt'] = FieldValue.serverTimestamp();
+    }
+    await _db.collection('calls').doc(callId).update(updates);
+  }
+
+  // ─── Status / Stories ─────────────────────────────────────────────────────
+  static Future<void> createStatus(StatusModel status) async {
+    await _db.collection('statuses').doc(status.id).set(status.toJson());
+  }
+
+  static Stream<List<StatusModel>> statusesStream(List<String> participantIds) {
+    final cutoff = Timestamp.fromDate(DateTime.now().subtract(const Duration(hours: 24)));
+    return _db
+        .collection('statuses')
+        .where('uid', whereIn: participantIds.isEmpty ? ['__none__'] : participantIds.take(10).toList())
+        .where('createdAt', isGreaterThan: cutoff)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((doc) => StatusModel.fromJson({'id': doc.id, ...doc.data()}))
+            .where((s) => !s.isExpired)
+            .toList());
+  }
+
+  static Future<List<StatusModel>> getMyStatuses(String myUid) async {
+    final cutoff = Timestamp.fromDate(DateTime.now().subtract(const Duration(hours: 24)));
+    final snap = await _db
+        .collection('statuses')
+        .where('uid', isEqualTo: myUid)
+        .where('createdAt', isGreaterThan: cutoff)
+        .orderBy('createdAt', descending: false)
+        .get();
+    return snap.docs
+        .map((doc) => StatusModel.fromJson({'id': doc.id, ...doc.data()}))
+        .where((s) => !s.isExpired)
+        .toList();
+  }
+
+  static Future<void> viewStatus(String statusId, String viewerUid) async {
+    await _db.collection('statuses').doc(statusId).update({
+      'viewedBy': FieldValue.arrayUnion([viewerUid]),
     });
   }
 
-  static Stream<List<Map<String, dynamic>>> callsStream(String myUid) {
-    return _db
-        .collection('calls')
-        .where('participantIds', arrayContains: myUid)
-        .orderBy('startedAt', descending: true)
-        .limit(50)
-        .snapshots()
-        .map((snap) =>
-            snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList());
+  static Future<void> deleteStatus(String statusId) async {
+    await _db.collection('statuses').doc(statusId).delete();
   }
 
-  // ─── Additional helpers ───────────────────────────────────────────────────
+  static Future<void> reactToStatus(String statusId, String uid, String emoji) async {
+    await _db.collection('statuses').doc(statusId).update({
+      'reactions.$uid': emoji,
+    });
+  }
 
-  /// Create a listen session with a known ID (host-generated)
-  static Future<void> createListenSessionById(
+  // ─── Listen Together ──────────────────────────────────────────────────────
+  static Future<void> updateListenSessionData(
       String sessionId, Map<String, dynamic> data) async {
-    await _db.collection('listen_sessions').doc(sessionId).set({
-      ...data,
+    await _db.collection('listenSessions').doc(sessionId).set(data, SetOptions(merge: true));
+  }
+
+  static Future<Map<String, dynamic>?> getListenSession(String sessionId) async {
+    final doc = await _db.collection('listenSessions').doc(sessionId).get();
+    return doc.exists ? doc.data() : null;
+  }
+
+  // ─── Notifications / Settings ─────────────────────────────────────────────
+  static Future<void> saveUserSettings(String uid, Map<String, dynamic> settings) async {
+    await _db.collection('userSettings').doc(uid).set(settings, SetOptions(merge: true));
+  }
+
+  static Future<Map<String, dynamic>> getUserSettings(String uid) async {
+    final doc = await _db.collection('userSettings').doc(uid).get();
+    return doc.data() ?? {};
+  }
+
+  // ─── Broadcast Lists ──────────────────────────────────────────────────────
+  static Future<void> createBroadcast({
+    required String myUid,
+    required String name,
+    required List<String> recipientUids,
+  }) async {
+    await _db.collection('broadcasts').add({
+      'name': name,
+      'createdBy': myUid,
+      'recipientUids': recipientUids,
       'createdAt': FieldValue.serverTimestamp(),
     });
   }
 
-  /// Get a listen session by ID (one-shot read)
-  static Future<Map<String, dynamic>?> getListenSession(
-      String sessionId) async {
-    final doc =
-        await _db.collection('listen_sessions').doc(sessionId).get();
-    if (!doc.exists) return null;
-    return {'id': doc.id, ...doc.data()!};
-  }
-
-  /// Update session fields (updaterUid optional)
-  static Future<void> updateListenSessionData(
-      String sessionId, Map<String, dynamic> data) async {
-    await _db.collection('listen_sessions').doc(sessionId).update({
-      ...data,
-      'lastUpdatedAt': FieldValue.serverTimestamp(),
-    });
-  }
-
-  /// Alias: react to a message
-  static Future<void> reactToMessage(
-      String convId, String msgId, String myUid, String emoji) =>
-      addReaction(convId, msgId, myUid, emoji);
-
-  /// Online status stream for a user
-  static Stream<bool> onlineStream(String uid) {
+  static Stream<List<Map<String, dynamic>>> broadcastsStream(String myUid) {
     return _db
-        .collection('users')
-        .doc(uid)
+        .collection('broadcasts')
+        .where('createdBy', isEqualTo: myUid)
         .snapshots()
-        .map((doc) => (doc.data()?['isOnline'] as bool?) ?? false);
+        .map((snap) => snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList());
   }
 }
