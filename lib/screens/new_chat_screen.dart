@@ -42,8 +42,7 @@ class _NewChatScreenState extends State<NewChatScreen>
     }
     setState(() => _loading = true);
     try {
-      final users =
-          await FirestoreService.searchUsers(q.trim(), widget.myUid);
+      final users = await FirestoreService.searchUsers(q.trim(), widget.myUid);
       if (mounted) setState(() => _results = users);
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -58,8 +57,7 @@ class _NewChatScreenState extends State<NewChatScreen>
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              ChatScreen(conversation: conv, myUid: widget.myUid),
+          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
         ),
       );
     } catch (_) {}
@@ -68,8 +66,10 @@ class _NewChatScreenState extends State<NewChatScreen>
   Future<void> _createGroup() async {
     final name = _groupNameCtrl.text.trim();
     if (name.isEmpty || _selectedForGroup.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Enter a group name and add at least one member')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('أدخل اسم المجموعة وأضف عضوًا على الأقل')),
+      );
       return;
     }
     try {
@@ -82,14 +82,13 @@ class _NewChatScreenState extends State<NewChatScreen>
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
-          builder: (_) =>
-              ChatScreen(conversation: conv, myUid: widget.myUid),
+          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
         ),
       );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
+            .showSnackBar(SnackBar(content: Text('خطأ: $e')));
       }
     }
   }
@@ -100,7 +99,7 @@ class _NewChatScreenState extends State<NewChatScreen>
       appBar: AppBar(
         backgroundColor: const Color(0xFF00A884),
         foregroundColor: Colors.white,
-        title: const Text('New Chat',
+        title: const Text('محادثة جديدة',
             style:
                 TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         bottom: TabBar(
@@ -109,8 +108,8 @@ class _NewChatScreenState extends State<NewChatScreen>
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white60,
           tabs: const [
-            Tab(icon: Icon(Icons.person), text: 'Direct'),
-            Tab(icon: Icon(Icons.group), text: 'New Group'),
+            Tab(icon: Icon(Icons.person), text: 'مباشر'),
+            Tab(icon: Icon(Icons.group), text: 'مجموعة جديدة'),
           ],
         ),
       ),
@@ -120,11 +119,10 @@ class _NewChatScreenState extends State<NewChatScreen>
           // ── Direct chat ──
           Column(
             children: [
-              // Help text
               Container(
-                width: double.infinity,
                 color: const Color(0xFFF0FFF8),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 child: const Row(
                   children: [
                     Icon(Icons.info_outline,
@@ -132,9 +130,9 @@ class _NewChatScreenState extends State<NewChatScreen>
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Search by name or email to find friends',
+                        'ابحث بالاسم أو البريد الإلكتروني للعثور على مستخدم',
                         style: TextStyle(
-                            color: Color(0xFF00A884), fontSize: 12),
+                            color: Color(0xFF005C4B), fontSize: 12),
                       ),
                     ),
                   ],
@@ -144,239 +142,215 @@ class _NewChatScreenState extends State<NewChatScreen>
                 padding: const EdgeInsets.all(12),
                 child: TextField(
                   controller: _ctrl,
+                  textDirection: TextDirection.rtl,
                   onChanged: _search,
                   autofocus: true,
                   decoration: InputDecoration(
-                    hintText: 'Search by name or email…',
+                    hintText: 'ابحث عن مستخدم...',
                     prefixIcon: const Icon(Icons.search,
                         color: Color(0xFF00A884)),
-                    filled: true,
-                    fillColor: const Color(0xFFF0F0F0),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none),
-                    suffixIcon: _loading
-                        ? const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Color(0xFF00A884))))
+                    suffixIcon: _ctrl.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _ctrl.clear();
+                              setState(() => _results = []);
+                            })
                         : null,
+                    filled: true,
+                    fillColor: const Color(0xFFF5F5F5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
                   ),
                 ),
               ),
-              Expanded(
-                child: _results.isEmpty && !_loading
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.person_search,
-                                size: 64, color: Colors.grey[300]),
-                            const SizedBox(height: 16),
-                            Text(
-                              _ctrl.text.length < 2
-                                  ? 'Type at least 2 characters to search'
-                                  : 'No users found',
-                              style: TextStyle(
-                                  color: Colors.grey[500], fontSize: 15),
-                            ),
-                          ],
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(color: Color(0xFF00A884)),
+                )
+              else
+                Expanded(
+                  child: _results.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.people_outline,
+                                  size: 64, color: Colors.grey[300]),
+                              const SizedBox(height: 12),
+                              Text(
+                                _ctrl.text.length < 2
+                                    ? 'اكتب على الأقل حرفين للبحث'
+                                    : 'لا يوجد مستخدمون بهذا الاسم',
+                                style: TextStyle(color: Colors.grey[500]),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: _results.length,
+                          itemBuilder: (ctx, i) {
+                            final u = _results[i];
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    const Color(0xFF00A884).withOpacity(0.15),
+                                backgroundImage: u.photoUrl != null
+                                    ? NetworkImage(u.photoUrl!)
+                                    : null,
+                                child: u.photoUrl == null
+                                    ? Text(
+                                        u.displayName.isNotEmpty
+                                            ? u.displayName[0].toUpperCase()
+                                            : '?',
+                                        style: const TextStyle(
+                                            color: Color(0xFF00A884),
+                                            fontWeight: FontWeight.bold))
+                                    : null,
+                              ),
+                              title: Text(u.displayName,
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600)),
+                              subtitle: Text(u.email,
+                                  style: TextStyle(
+                                      color: Colors.grey[500], fontSize: 12)),
+                              trailing: ElevatedButton.icon(
+                                onPressed: () => _openChat(u),
+                                icon: const Icon(Icons.chat, size: 16),
+                                label: const Text('مراسلة'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF00A884),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 6),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(20)),
+                                  textStyle: const TextStyle(fontSize: 12),
+                                ),
+                              ),
+                              onTap: () => _openChat(u),
+                            );
+                          },
                         ),
-                      )
-                    : ListView.separated(
-                        itemCount: _results.length,
-                        separatorBuilder: (_, __) => const Divider(
-                            height: 1, indent: 72),
-                        itemBuilder: (_, i) {
-                          final u = _results[i];
-                          return ListTile(
-                            contentPadding:
-                                const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 4),
-                            leading: CircleAvatar(
-                              radius: 24,
-                              backgroundColor: const Color(0xFF00A884),
-                              backgroundImage: u.photoUrl != null
-                                  ? NetworkImage(u.photoUrl!)
-                                  : null,
-                              child: u.photoUrl == null
-                                  ? Text(
-                                      u.displayName.isNotEmpty
-                                          ? u.displayName[0].toUpperCase()
-                                          : '?',
-                                      style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 18,
-                                          fontWeight: FontWeight.bold))
-                                  : null,
-                            ),
-                            title: Text(u.displayName,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600)),
-                            subtitle: Text(u.email,
-                                style:
-                                    TextStyle(color: Colors.grey[500])),
-                            trailing: u.isOnline
-                                ? Container(
-                                    width: 10,
-                                    height: 10,
-                                    decoration: const BoxDecoration(
-                                        color: Color(0xFF00A884),
-                                        shape: BoxShape.circle))
-                                : null,
-                            onTap: () => _openChat(u),
-                          );
-                        },
-                      ),
-              ),
+                ),
             ],
           ),
 
-          // ── New Group ──
+          // ── Group chat ──
           Column(
             children: [
-              Container(
-                color: const Color(0xFFF0FFF8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 10),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline,
-                        color: Color(0xFF00A884), size: 16),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Search and select members, then set a group name',
-                        style: TextStyle(
-                            color: Color(0xFF00A884), fontSize: 12),
-                      ),
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: TextField(
+                  controller: _groupNameCtrl,
+                  textDirection: TextDirection.rtl,
+                  decoration: InputDecoration(
+                    hintText: 'اسم المجموعة',
+                    prefixIcon:
+                        const Icon(Icons.group, color: Color(0xFF00A884)),
+                    filled: true,
+                    fillColor: const Color(0xFFF5F5F5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
                     ),
-                  ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: TextField(
+                  onChanged: _search,
+                  textDirection: TextDirection.rtl,
+                  decoration: InputDecoration(
+                    hintText: 'ابحث لإضافة أعضاء...',
+                    prefixIcon:
+                        const Icon(Icons.search, color: Color(0xFF00A884)),
+                    filled: true,
+                    fillColor: const Color(0xFFF5F5F5),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
                 ),
               ),
               if (_selectedForGroup.isNotEmpty)
-                Container(
-                  height: 68,
-                  color: Colors.white,
-                  child: ListView.builder(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
-                    itemCount: _selectedForGroup.length,
-                    itemBuilder: (_, i) {
-                      final u = _selectedForGroup[i];
-                      return Padding(
-                        padding:
-                            const EdgeInsets.only(right: 8),
-                        child: Stack(
-                          clipBehavior: Clip.none,
-                          children: [
-                            CircleAvatar(
-                              radius: 24,
-                              backgroundColor:
-                                  const Color(0xFF00A884),
-                              backgroundImage: u.photoUrl != null
-                                  ? NetworkImage(u.photoUrl!)
-                                  : null,
-                              child: u.photoUrl == null
-                                  ? Text(
-                                      u.displayName.isNotEmpty
-                                          ? u.displayName[0]
-                                              .toUpperCase()
-                                          : '?',
-                                      style: const TextStyle(
-                                          color: Colors.white))
-                                  : null,
-                            ),
-                            Positioned(
-                              top: -4,
-                              right: -4,
-                              child: GestureDetector(
-                                onTap: () => setState(() =>
-                                    _selectedForGroup.remove(u)),
-                                child: Container(
-                                  width: 18,
-                                  height: 18,
-                                  decoration: const BoxDecoration(
-                                      color: Colors.red,
-                                      shape: BoxShape.circle),
-                                  child: const Icon(Icons.close,
-                                      color: Colors.white,
-                                      size: 12),
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: SizedBox(
+                    height: 60,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: _selectedForGroup
+                          .map((u) => Padding(
+                                padding:
+                                    const EdgeInsets.only(left: 8),
+                                child: Column(
+                                  children: [
+                                    Stack(
+                                      children: [
+                                        CircleAvatar(
+                                          radius: 20,
+                                          backgroundColor: const Color(
+                                                  0xFF00A884)
+                                              .withOpacity(0.15),
+                                          child: Text(
+                                              u.displayName[0].toUpperCase(),
+                                              style: const TextStyle(
+                                                  color: Color(0xFF00A884),
+                                                  fontWeight: FontWeight.bold)),
+                                        ),
+                                        Positioned(
+                                          top: -2,
+                                          right: -2,
+                                          child: GestureDetector(
+                                            onTap: () => setState(() =>
+                                                _selectedForGroup.remove(u)),
+                                            child: const CircleAvatar(
+                                              radius: 8,
+                                              backgroundColor: Colors.red,
+                                              child: Icon(Icons.close,
+                                                  size: 10,
+                                                  color: Colors.white),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Text(
+                                      u.displayName.split(' ').first,
+                                      style: const TextStyle(fontSize: 10),
+                                    ),
+                                  ],
                                 ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                              ))
+                          .toList(),
+                    ),
                   ),
                 ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                child: TextField(
-                  controller: _groupNameCtrl,
-                  decoration: InputDecoration(
-                    hintText: 'Group name…',
-                    prefixIcon: const Icon(Icons.group,
-                        color: Color(0xFF00A884)),
-                    filled: true,
-                    fillColor: const Color(0xFFF0F0F0),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                child: TextField(
-                  onChanged: _search,
-                  decoration: InputDecoration(
-                    hintText: 'Search members…',
-                    prefixIcon: const Icon(Icons.search,
-                        color: Color(0xFF00A884)),
-                    filled: true,
-                    fillColor: const Color(0xFFF0F0F0),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none),
-                  ),
-                ),
-              ),
               Expanded(
-                child: ListView.separated(
+                child: ListView.builder(
                   itemCount: _results.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, indent: 72),
-                  itemBuilder: (_, i) {
+                  itemBuilder: (ctx, i) {
                     final u = _results[i];
                     final selected = _selectedForGroup.contains(u);
                     return ListTile(
                       leading: CircleAvatar(
-                        radius: 22,
                         backgroundColor:
-                            const Color(0xFF00A884),
-                        backgroundImage: u.photoUrl != null
-                            ? NetworkImage(u.photoUrl!)
-                            : null,
-                        child: u.photoUrl == null
-                            ? Text(
-                                u.displayName.isNotEmpty
-                                    ? u.displayName[0]
-                                        .toUpperCase()
-                                    : '?',
-                                style: const TextStyle(
-                                    color: Colors.white))
-                            : null,
+                            const Color(0xFF00A884).withOpacity(0.15),
+                        child: Text(u.displayName[0].toUpperCase(),
+                            style: const TextStyle(
+                                color: Color(0xFF00A884),
+                                fontWeight: FontWeight.bold)),
                       ),
                       title: Text(u.displayName,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600)),
+                          style:
+                              const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(u.email),
                       trailing: selected
                           ? const Icon(Icons.check_circle,
@@ -404,7 +378,7 @@ class _NewChatScreenState extends State<NewChatScreen>
                   child: ElevatedButton.icon(
                     icon: const Icon(Icons.group_add),
                     label: Text(
-                        'Create Group (${_selectedForGroup.length} members)'),
+                        'إنشاء مجموعة (${_selectedForGroup.length} أعضاء)'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF00A884),
                       foregroundColor: Colors.white,

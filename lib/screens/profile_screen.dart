@@ -1,9 +1,10 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_service.dart';
 import '../services/firestore_service.dart';
+import '../services/auth_service.dart';
 import '../models/user_model.dart';
 
 class ProfileScreen extends StatefulWidget {
@@ -44,7 +45,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _updatePhoto() async {
-    final p = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 80);
+    final p = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 80);
     if (p == null) return;
     if (mounted) setState(() => _saving = true);
     try {
@@ -56,10 +58,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
       await ApiService.updateProfile(photoUrl: result['url'] as String);
       await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ تم تحديث الصورة الشخصية'),
+            backgroundColor: Color(0xFF00A884),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
+            .showSnackBar(SnackBar(content: Text('خطأ: $e')));
       }
     }
     if (mounted) setState(() => _saving = false);
@@ -76,13 +86,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('✅ Profile updated')),
+          const SnackBar(
+            content: Text('✅ تم حفظ التغييرات'),
+            backgroundColor: Color(0xFF00A884),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
+            .showSnackBar(SnackBar(content: Text('خطأ: $e')));
       }
     }
     if (mounted) setState(() => _saving = false);
@@ -101,14 +114,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF00A884),
         foregroundColor: Colors.white,
-        title: const Text('My Profile',
+        title: const Text('الملف الشخصي',
             style: TextStyle(fontWeight: FontWeight.bold)),
         actions: [
           if (!_loading && !_saving)
             TextButton(
               onPressed: _save,
-              child: const Text('Save',
-                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              child: const Text('حفظ',
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold)),
             ),
         ],
       ),
@@ -118,7 +132,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // Header
+                  // Header with avatar
                   Container(
                     color: const Color(0xFF00A884),
                     width: double.infinity,
@@ -127,8 +141,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       child: Stack(
                         children: [
                           CircleAvatar(
-                            radius: 60,
-                            backgroundColor: Colors.white30,
+                            radius: 56,
+                            backgroundColor: Colors.white,
                             backgroundImage: _user?.photoUrl != null
                                 ? NetworkImage(_user!.photoUrl!)
                                 : null,
@@ -138,9 +152,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                         ? _user!.displayName[0].toUpperCase()
                                         : '?',
                                     style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 48,
-                                        fontWeight: FontWeight.bold),
+                                        fontSize: 36,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF00A884)),
                                   )
                                 : null,
                           ),
@@ -148,18 +162,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             bottom: 0,
                             right: 0,
                             child: GestureDetector(
-                              onTap: _saving ? null : _updatePhoto,
+                              onTap: _updatePhoto,
                               child: Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
+                                padding: const EdgeInsets.all(8),
+                                decoration: const BoxDecoration(
                                   color: Colors.white,
                                   shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: Colors.black.withOpacity(0.2),
-                                        blurRadius: 6)
-                                  ],
                                 ),
                                 child: const Icon(Icons.camera_alt,
                                     color: Color(0xFF00A884), size: 20),
@@ -170,85 +178,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   ),
-
-                  // Fields
+                  const SizedBox(height: 24),
                   Padding(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('YOUR NAME',
-                            style: TextStyle(
-                                color: Color(0xFF00A884),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.8)),
-                        const SizedBox(height: 8),
-                        TextField(
+                        _label('الاسم'),
+                        _field(
                           controller: _nameCtrl,
-                          decoration: InputDecoration(
-                            hintText: 'Enter your name',
-                            filled: true,
-                            fillColor: const Color(0xFFF8F8F8),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            prefixIcon: const Icon(Icons.person,
-                                color: Color(0xFF00A884)),
-                          ),
+                          hint: 'اسمك الكامل',
+                          icon: Icons.person,
                         ),
-                        const SizedBox(height: 24),
-                        const Text('ABOUT',
-                            style: TextStyle(
-                                color: Color(0xFF00A884),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.8)),
-                        const SizedBox(height: 8),
-                        TextField(
+                        const SizedBox(height: 16),
+                        _label('الحالة'),
+                        _field(
                           controller: _statusCtrl,
-                          maxLength: 100,
-                          decoration: InputDecoration(
-                            hintText: 'e.g. Hey there! I am using WhatsApp Clone.',
-                            filled: true,
-                            fillColor: const Color(0xFFF8F8F8),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            prefixIcon: const Icon(Icons.info_outline,
-                                color: Color(0xFF00A884)),
+                          hint: 'ما الذي يشغل بالك؟',
+                          icon: Icons.info_outline,
+                        ),
+                        const SizedBox(height: 16),
+                        _label('البريد الإلكتروني'),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8F8F8),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.email,
+                                  color: Colors.grey, size: 20),
+                              const SizedBox(width: 12),
+                              Text(_user?.email ?? '',
+                                  style: const TextStyle(
+                                      color: Colors.grey, fontSize: 15)),
+                            ],
                           ),
                         ),
-                        if (_user?.email.isNotEmpty == true) ...[
-                          const SizedBox(height: 8),
-                          const Text('EMAIL',
-                              style: TextStyle(
-                                  color: Color(0xFF00A884),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  letterSpacing: 0.8)),
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 14),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8F8F8),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(Icons.email,
-                                    color: Colors.grey, size: 20),
-                                const SizedBox(width: 12),
-                                Text(_user!.email,
-                                    style: const TextStyle(
-                                        color: Colors.grey, fontSize: 15)),
-                              ],
-                            ),
-                          ),
-                        ],
                         const SizedBox(height: 32),
                         if (_saving)
                           const Center(
@@ -266,18 +235,57 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(14)),
                               ),
-                              child: const Text('Save Changes',
+                              child: const Text('حفظ التغييرات',
                                   style: TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold)),
                             ),
                           ),
+                        const SizedBox(height: 32),
                       ],
                     ),
                   ),
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _label(String text) => Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Text(text,
+            style: const TextStyle(
+                color: Color(0xFF00A884),
+                fontWeight: FontWeight.w600,
+                fontSize: 13)),
+      );
+
+  Widget _field(
+      {required TextEditingController controller,
+      required String hint,
+      required IconData icon}) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: TextStyle(color: Colors.grey[400]),
+        prefixIcon: Icon(icon, color: const Color(0xFF00A884), size: 20),
+        filled: true,
+        fillColor: const Color(0xFFF8F8F8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[200]!),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: Colors.grey[200]!),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide:
+              const BorderSide(color: Color(0xFF00A884), width: 1.5),
+        ),
+      ),
     );
   }
 }

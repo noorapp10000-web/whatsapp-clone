@@ -27,7 +27,7 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: 1);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
     _myUid = FirebaseAuth.instance.currentUser?.uid ?? '';
     _connectWs();
     _updateOnlineStatus(true);
@@ -60,7 +60,7 @@ class _HomeScreenState extends State<HomeScreen>
       MaterialPageRoute(
         builder: (_) => CallScreen(
           otherUid: fromUid,
-          otherName: callerData['displayName'] as String? ?? 'Unknown',
+          otherName: callerData['displayName'] as String? ?? 'مجهول',
           otherPhoto: callerData['photoUrl'] as String?,
           isVideo: isVideo,
           isIncoming: true,
@@ -79,7 +79,7 @@ class _HomeScreenState extends State<HomeScreen>
         .doc(fromUid)
         .get();
     final callerName =
-        callerDoc.data()?['displayName'] as String? ?? 'Someone';
+        callerDoc.data()?['displayName'] as String? ?? 'أحدهم';
     if (!mounted) return;
     showDialog(
       context: context,
@@ -88,21 +88,20 @@ class _HomeScreenState extends State<HomeScreen>
         title: const Row(children: [
           Icon(Icons.headphones, color: Color(0xFF00A884)),
           SizedBox(width: 8),
-          Text('Listen Together'),
+          Text('استماع معاً'),
         ]),
-        content: Text('$callerName wants to listen to music together!'),
+        content: Text('$callerName يدعوك للاستماع للموسيقى معاً!'),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               WebSocketService.sendLTReject(fromUid, sessionId);
             },
-            child:
-                const Text('Decline', style: TextStyle(color: Colors.grey)),
+            child: const Text('رفض', style: TextStyle(color: Colors.grey)),
           ),
           ElevatedButton.icon(
             icon: const Icon(Icons.headphones),
-            label: const Text('Join'),
+            label: const Text('انضم'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF00A884),
               foregroundColor: Colors.white,
@@ -110,17 +109,16 @@ class _HomeScreenState extends State<HomeScreen>
             onPressed: () {
               Navigator.pop(context);
               WebSocketService.sendLTAccept(fromUid, sessionId);
-              FirestoreService.updateListenSession(
-                  sessionId, {'status': 'active'}, _myUid);
+              FirestoreService.updateListenSessionData(sessionId, {
+                'participants': [_myUid],
+              }).ignore();
               Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => MusicPlayerScreen(
                     sessionId: sessionId,
-                    myUid: _myUid,
                     otherUid: fromUid,
-                    otherName: callerName,
-                    isCreator: false,
+                    isHost: false,
                   ),
                 ),
               );
@@ -133,18 +131,15 @@ class _HomeScreenState extends State<HomeScreen>
 
   Future<void> _signOut() async {
     _updateOnlineStatus(false);
-    WebSocketService.disconnect();
     await AuthService.signOut();
-    if (mounted) {
-      Navigator.pushNamedAndRemoveUntil(context, '/login', (_) => false);
-    }
+    if (mounted) Navigator.pushReplacementNamed(context, '/login');
   }
 
   @override
   void dispose() {
-    _updateOnlineStatus(false);
     WebSocketService.off('call_offer', _handleIncomingCall);
     WebSocketService.off('lt_invite', _handleLTInvite);
+    _updateOnlineStatus(false);
     _tabController.dispose();
     super.dispose();
   }
@@ -152,43 +147,50 @@ class _HomeScreenState extends State<HomeScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: const Color(0xFF00A884),
-        elevation: 0,
-        title: const Text('WhatsApp Clone',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 20)),
+        title: const Text(
+          'نور شات',
+          style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22),
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.search, color: Colors.white),
-            onPressed: () => _tabController.animateTo(1),
+            tooltip: 'بحث',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NewChatScreen(myUid: _myUid),
+              ),
+            ),
           ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (v) {
-              if (v == 'logout') _signOut();
               if (v == 'profile') {
                 Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => ProfileScreen(myUid: _myUid)));
+                    MaterialPageRoute(
+                        builder: (_) => ProfileScreen(myUid: _myUid)));
+              } else if (v == 'logout') {
+                _signOut();
               }
             },
             itemBuilder: (_) => [
               const PopupMenuItem(
                   value: 'profile',
-                  child: ListTile(
-                      leading: Icon(Icons.person),
-                      title: Text('My Profile'),
-                      contentPadding: EdgeInsets.zero,
-                      dense: true)),
+                  child: Row(children: [
+                    Icon(Icons.person, color: Color(0xFF00A884)),
+                    SizedBox(width: 12),
+                    Text('الملف الشخصي'),
+                  ])),
               const PopupMenuItem(
                   value: 'logout',
-                  child: ListTile(
-                      leading: Icon(Icons.logout, color: Colors.red),
-                      title: Text('Logout',
-                          style: TextStyle(color: Colors.red)),
-                      contentPadding: EdgeInsets.zero,
-                      dense: true)),
+                  child: Row(children: [
+                    Icon(Icons.logout, color: Colors.red),
+                    SizedBox(width: 12),
+                    Text('تسجيل الخروج'),
+                  ])),
             ],
           ),
         ],
@@ -198,160 +200,140 @@ class _HomeScreenState extends State<HomeScreen>
           indicatorWeight: 3,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white60,
+          labelStyle:
+              const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
           tabs: const [
-            Tab(icon: Icon(Icons.call), text: 'Calls'),
-            Tab(icon: Icon(Icons.chat_bubble), text: 'Chats'),
-            Tab(icon: Icon(Icons.group), text: 'Groups'),
+            Tab(text: 'الدردشات'),
+            Tab(text: 'المكالمات'),
+            Tab(text: 'المزيد'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
+          _ChatsTab(myUid: _myUid),
           CallsScreen(myUid: _myUid),
-          _buildConvList(groupOnly: false),
-          _buildConvList(groupOnly: true),
+          _MoreTab(myUid: _myUid, onSignOut: _signOut),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF00A884),
-        elevation: 4,
-        onPressed: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => NewChatScreen(myUid: _myUid)),
-        ),
-        child: const Icon(Icons.chat, color: Colors.white),
-      ),
+      floatingActionButton: _tabController.index == 0
+          ? FloatingActionButton(
+              backgroundColor: const Color(0xFF00A884),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => NewChatScreen(myUid: _myUid)),
+              ),
+              child: const Icon(Icons.chat, color: Colors.white),
+            )
+          : null,
     );
   }
+}
 
-  Widget _buildConvList({required bool groupOnly}) {
+// ── Chats Tab ────────────────────────────────────────────────────────────────
+class _ChatsTab extends StatefulWidget {
+  final String myUid;
+  const _ChatsTab({required this.myUid});
+
+  @override
+  State<_ChatsTab> createState() => _ChatsTabState();
+}
+
+class _ChatsTabState extends State<_ChatsTab> {
+  @override
+  Widget build(BuildContext context) {
     return StreamBuilder<List<ConversationModel>>(
-      stream: FirestoreService.conversationsStream(_myUid),
-      builder: (_, snap) {
+      stream: FirestoreService.conversationsStream(widget.myUid),
+      builder: (ctx, snap) {
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(
-              child:
-                  CircularProgressIndicator(color: Color(0xFF00A884)));
+              child: CircularProgressIndicator(color: Color(0xFF00A884)));
         }
-        final all = snap.data ?? [];
-        final convs = groupOnly
-            ? all.where((c) => c.type == 'group').toList()
-            : all.where((c) => c.type == 'direct').toList();
-
+        final convs = snap.data ?? [];
         if (convs.isEmpty) {
           return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    groupOnly ? Icons.group : Icons.chat_bubble_outline,
-                    size: 80,
-                    color: Colors.grey[300],
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    groupOnly
-                        ? 'No groups yet'
-                        : 'No conversations yet',
-                    style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    groupOnly
-                        ? 'Create a group to chat with multiple friends at once'
-                        : 'Tap the chat button below to start a conversation.\nSearch for friends by name or email.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.grey[500], fontSize: 14, height: 1.5),
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    icon: Icon(groupOnly ? Icons.group_add : Icons.person_add),
-                    label: Text(groupOnly ? 'Create Group' : 'Start Chat'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00A884),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24)),
-                    ),
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              NewChatScreen(myUid: _myUid)),
-                    ),
-                  ),
-                ],
-              ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.chat_bubble_outline,
+                    size: 80, color: Colors.grey[300]),
+                const SizedBox(height: 16),
+                Text('لا توجد محادثات بعد',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 16)),
+                const SizedBox(height: 8),
+                Text('اضغط على ✎ لبدء محادثة جديدة',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 13)),
+              ],
             ),
           );
         }
-
         return ListView.separated(
           itemCount: convs.length,
-          separatorBuilder: (_, __) => const Divider(
-              height: 1, indent: 72, color: Color(0xFFEEEEEE)),
-          itemBuilder: (_, i) {
+          separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
+          itemBuilder: (ctx, i) {
             final conv = convs[i];
-            final name = conv.displayName(_myUid);
-            final photo = conv.displayPhoto(_myUid);
-            final lastMsg = conv.lastMessage;
-            final lastTime = conv.lastMessageAt;
+            final photo = conv.displayPhoto(widget.myUid);
+            final name = conv.displayName(widget.myUid);
+            final isGroup = conv.type == 'group';
+
             return ListTile(
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               leading: CircleAvatar(
                 radius: 26,
-                backgroundColor: const Color(0xFF00A884),
+                backgroundColor: const Color(0xFF00A884).withOpacity(0.15),
                 backgroundImage:
                     photo != null ? NetworkImage(photo) : null,
                 child: photo == null
-                    ? Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : '?',
+                    ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
                         style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold),
-                      )
+                            color: Color(0xFF00A884),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18))
                     : null,
               ),
-              title: Text(name,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w600, fontSize: 16)),
-              subtitle: lastMsg != null
-                  ? Text(
-                      _fmtLastMsg(lastMsg),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                      style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                    )
-                  : null,
-              trailing: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.end,
+              title: Row(
                 children: [
-                  Text(
-                    _fmtTime(lastTime),
-                    style: TextStyle(
-                        color: Colors.grey[500], fontSize: 11),
+                  if (isGroup)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 4),
+                      child: Icon(Icons.group,
+                          size: 14, color: Colors.grey),
+                    ),
+                  Expanded(
+                    child: Text(name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 15),
+                        overflow: TextOverflow.ellipsis),
                   ),
-                  const SizedBox(height: 4),
+                  Text(
+                    _fmtTime(conv.lastMessageAt),
+                    style: TextStyle(
+                        color: conv.unreadCount > 0
+                            ? const Color(0xFF00A884)
+                            : Colors.grey[500],
+                        fontSize: 11),
+                  ),
+                ],
+              ),
+              subtitle: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _fmtLastMsg(conv.lastMessage),
+                      style: TextStyle(
+                          color: Colors.grey[600], fontSize: 13),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   if (conv.unreadCount > 0)
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF00A884),
-                        borderRadius: BorderRadius.circular(12),
+                      padding: const EdgeInsets.all(5),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF00A884),
+                        shape: BoxShape.circle,
                       ),
                       child: Text(
                         '${conv.unreadCount}',
@@ -367,7 +349,7 @@ class _HomeScreenState extends State<HomeScreen>
                 context,
                 MaterialPageRoute(
                   builder: (_) =>
-                      ChatScreen(conversation: conv, myUid: _myUid),
+                      ChatScreen(conversation: conv, myUid: widget.myUid),
                 ),
               ),
             );
@@ -378,13 +360,14 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   String _fmtLastMsg(lastMsg) {
+    if (lastMsg == null) return '';
     final type = lastMsg.type as String? ?? 'text';
-    if (type == 'image') return '📷 Image';
-    if (type == 'video') return '🎥 Video';
-    if (type == 'voice') return '🎤 Voice message';
-    if (type == 'audio') return '🎵 Audio';
-    if (type == 'file') return '📎 ${lastMsg.fileName ?? 'File'}';
-    if (type == 'listen_together') return '🎵 Listen Together: ${lastMsg.ltTitle ?? 'Music'}';
+    if (type == 'image') return '📷 صورة';
+    if (type == 'video') return '🎥 فيديو';
+    if (type == 'voice') return '🎤 رسالة صوتية';
+    if (type == 'audio') return '🎵 صوت';
+    if (type == 'file') return '📎 ${lastMsg.fileName ?? 'ملف'}';
+    if (type == 'listen_together') return '🎵 استماع معاً';
     return lastMsg.content ?? '';
   }
 
@@ -395,9 +378,61 @@ class _HomeScreenState extends State<HomeScreen>
     if (msgDay == today) {
       return '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     } else if (today.difference(msgDay).inDays == 1) {
-      return 'Yesterday';
+      return 'أمس';
     } else {
-      return '${dt.day}/${dt.month}/${dt.year}';
+      return '${dt.day}/${dt.month}';
     }
   }
 }
+
+// ── More Tab ─────────────────────────────────────────────────────────────────
+class _MoreTab extends StatelessWidget {
+  final String myUid;
+  final VoidCallback onSignOut;
+  const _MoreTab({required this.myUid, required this.onSignOut});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        const SizedBox(height: 8),
+        _tile(context, Icons.person, 'الملف الشخصي', 'عرض وتعديل ملفك الشخصي',
+            () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => ProfileScreen(myUid: myUid)))),
+        _tile(context, Icons.notifications, 'الإشعارات', 'إدارة الإشعارات', null),
+        _tile(context, Icons.lock, 'الخصوصية', 'إعدادات الخصوصية', null),
+        _tile(context, Icons.color_lens, 'المظهر', 'تخصيص شكل التطبيق', null),
+        const Divider(),
+        _tile(context, Icons.help_outline, 'المساعدة', 'الأسئلة الشائعة', null),
+        _tile(context, Icons.info_outline, 'عن التطبيق', 'الإصدار 2.0.0', null),
+        const Divider(),
+        ListTile(
+          leading: const CircleAvatar(
+              backgroundColor: Color(0xFFFFEEEE),
+              child: Icon(Icons.logout, color: Colors.red)),
+          title: const Text('تسجيل الخروج',
+              style: TextStyle(color: Colors.red, fontWeight: FontWeight.w600)),
+          onTap: onSignOut,
+        ),
+      ],
+    );
+  }
+
+  Widget _tile(BuildContext ctx, IconData icon, String title, String subtitle,
+      VoidCallback? onTap) {
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: const Color(0xFF00A884).withOpacity(0.1),
+        child: Icon(icon, color: const Color(0xFF00A884)),
+      ),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+      subtitle: Text(subtitle,
+          style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+      trailing: onTap != null
+          ? const Icon(Icons.chevron_right, color: Colors.grey)
+          : null,
+      onTap: onTap,
+    );
+  }
+}
+

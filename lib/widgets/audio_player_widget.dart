@@ -68,27 +68,30 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
 
   @override
   Widget build(BuildContext context) {
-    final progress =
-        _total.inMilliseconds > 0 ? _position.inMilliseconds / _total.inMilliseconds : 0.0;
+    final progress = _total.inMilliseconds > 0
+        ? _position.inMilliseconds / _total.inMilliseconds
+        : 0.0;
     final color = widget.isMe ? const Color(0xFF00A884) : Colors.grey[700]!;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        GestureDetector(
-          onTap: _togglePlay,
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
+        // Avatar-style mic icon
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+          ),
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            icon: Icon(
               _playing ? Icons.pause : Icons.play_arrow,
               color: Colors.white,
               size: 20,
             ),
+            onPressed: _togglePlay,
           ),
         ),
         const SizedBox(width: 8),
@@ -98,30 +101,39 @@ class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
             children: [
               SliderTheme(
                 data: SliderTheme.of(context).copyWith(
-                  trackHeight: 2,
+                  trackHeight: 2.5,
                   thumbShape:
                       const RoundSliderThumbShape(enabledThumbRadius: 5),
                   overlayShape: SliderComponentShape.noOverlay,
                   activeTrackColor: color,
-                  inactiveTrackColor: color.withOpacity(0.3),
+                  inactiveTrackColor: color.withOpacity(0.25),
                   thumbColor: color,
                 ),
                 child: Slider(
                   value: progress.clamp(0.0, 1.0),
                   onChanged: (v) async {
-                    final pos =
-                        Duration(milliseconds: (v * _total.inMilliseconds).round());
+                    final pos = Duration(
+                        milliseconds: (v * _total.inMilliseconds).round());
                     await _player.seek(pos);
                   },
                 ),
               ),
-              Text(
-                _playing
-                    ? _fmt(_position)
-                    : _total > Duration.zero
-                        ? _fmt(_total)
-                        : '0:00',
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              Padding(
+                padding: const EdgeInsets.only(right: 4, left: 4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _playing
+                          ? _fmt(_position)
+                          : _total > Duration.zero
+                              ? _fmt(_total)
+                              : '0:00',
+                      style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                    ),
+                    Icon(Icons.mic, size: 12, color: Colors.grey[400]),
+                  ],
+                ),
               ),
             ],
           ),

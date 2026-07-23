@@ -1,23 +1,25 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
-import '../services/firestore_service.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/websocket_service.dart';
+import '../services/firestore_service.dart';
+import '../services/api_service.dart';
 
 class MusicPlayerScreen extends StatefulWidget {
   final String sessionId;
-  final String myUid;
   final String otherUid;
-  final String otherName;
-  final bool isCreator;
+  final bool isHost;
+  final List<Map<String, dynamic>>? initialPlaylist;
 
   const MusicPlayerScreen({
     super.key,
     required this.sessionId,
-    required this.myUid,
     required this.otherUid,
-    required this.otherName,
-    required this.isCreator,
+    required this.isHost,
+    this.initialPlaylist,
   });
 
   @override
@@ -29,165 +31,210 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   List<Map<String, dynamic>> _playlist = [];
   int _currentIndex = 0;
   bool _playing = false;
+  bool _uploading = false;
   Duration _position = Duration.zero;
   Duration _total = Duration.zero;
-  bool _syncing = false;
-  StreamSubscription? _sessionSub;
+  bool _syncLock = false;
 
   @override
   void initState() {
     super.initState();
-    _initPlayer();
-    _listenSession();
-    _listenWs();
-  }
+    if (widget.initialPlaylist != null) {
+      _playlist = List.from(widget.initialPlaylist!);
+    }
 
-  void _initPlayer() {
+    // Audio player events
     _player.onPlayerStateChanged.listen((s) {
       if (mounted) setState(() => _playing = s == PlayerState.playing);
     });
-    _player.onPositionChanged.listen((p) {
-      if (mounted) setState(() => _position = p);
+    _player.onPositionChanged.listen((pos) {
+      if (mounted) setState(() => _position = pos);
     });
-    _player.onDurationChanged.listen((d) {
-      if (mounted) setState(() => _total = d);
+    _player.onDurationChanged.listen((dur) {
+      if (mounted) setState(() => _total = dur);
     });
-    _player.onPlayerComplete.listen((_) => _next());
+    _player.onPlayerComplete.listen((_) => _nextTrack());
+
+    // WebSocket events
+    WebSocketService.on('lt_play', _onRemotePlay);
+    WebSocketService.on('lt_pause', _onRemotePause);
+    WebSocketService.on('lt_seek', _onRemoteSeek);
+    WebSocketService.on('lt_next', _onRemoteNext);
+    WebSocketService.on('lt_end', _onRemoteEnd);
+
+    // Load Firestore session
+    _loadSession();
   }
 
-  void _listenSession() {
-    _sessionSub =
-        FirestoreService.listenSessionStream(widget.sessionId).listen((data) {
-      if (data == null || !mounted) return;
-      final updatedBy = data['lastUpdatedBy'] as String? ?? '';
-      if (updatedBy == widget.myUid) return; // ignore own updates
-
-      final playlist = (data['playlist'] as List?)
-              ?.map((e) => Map<String, dynamic>.from(e as Map))
-              .toList() ??
-          [];
-      final idx = (data['currentIndex'] as int?) ?? 0;
-      final isPlaying = (data['isPlaying'] as bool?) ?? false;
-      final posMs = (data['positionMs'] as int?) ?? 0;
-
-      if (mounted) {
-        setState(() {
-          _playlist = playlist;
-          _currentIndex = idx;
-        });
-        _syncPlayback(isPlaying, posMs, idx);
-      }
-    });
-  }
-
-  void _listenWs() {
-    WebSocketService.on('lt_play', _onLtPlay);
-    WebSocketService.on('lt_pause', _onLtPause);
-    WebSocketService.on('lt_seek', _onLtSeek);
-    WebSocketService.on('lt_next', _onLtNext);
-    WebSocketService.on('lt_end', _onLtEnd);
-  }
-
-  void _onLtPlay(Map<String, dynamic> msg) {
-    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
-    _syncPlayback(true, (msg['positionMs'] as int?) ?? 0, _currentIndex);
-  }
-
-  void _onLtPause(Map<String, dynamic> msg) {
-    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
-    _syncPlayback(false, (msg['positionMs'] as int?) ?? 0, _currentIndex);
-  }
-
-  void _onLtSeek(Map<String, dynamic> msg) {
-    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
-    _player.seek(Duration(milliseconds: (msg['positionMs'] as int?) ?? 0));
-  }
-
-  void _onLtNext(Map<String, dynamic> msg) {
-    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
-    final idx = (msg['index'] as int?) ?? 0;
-    _loadTrack(idx);
-  }
-
-  void _onLtEnd(Map<String, dynamic> msg) {
-    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
-    if (mounted) Navigator.pop(context);
-  }
-
-  Future<void> _syncPlayback(bool shouldPlay, int posMs, int trackIdx) async {
-    if (_syncing) return;
-    _syncing = true;
+  Future<void> _loadSession() async {
     try {
-      if (trackIdx != _currentIndex) {
-        await _loadTrack(trackIdx, autoPlay: shouldPlay, startMs: posMs);
-      } else {
-        final diff = (_position.inMilliseconds - posMs).abs();
-        if (diff > 2000) {
-          await _player.seek(Duration(milliseconds: posMs));
-        }
-        if (shouldPlay && !_playing) {
-          await _player.resume();
-        } else if (!shouldPlay && _playing) {
-          await _player.pause();
+      final session =
+          await FirestoreService.getListenSession(widget.sessionId);
+      if (session != null && mounted) {
+        final pl = List<Map<String, dynamic>>.from(
+            session['playlist'] as List? ?? []);
+        final idx = (session['currentIndex'] as int?) ?? 0;
+        setState(() {
+          _playlist = pl;
+          _currentIndex = idx.clamp(0, pl.isEmpty ? 0 : pl.length - 1);
+        });
+        if (_playlist.isNotEmpty) {
+          await _loadTrack(_currentIndex, autoPlay: false);
         }
       }
-    } finally {
-      _syncing = false;
-    }
+    } catch (_) {}
   }
 
-  Future<void> _loadTrack(int idx,
-      {bool autoPlay = true, int startMs = 0}) async {
-    if (idx < 0 || idx >= _playlist.length) return;
-    setState(() => _currentIndex = idx);
-    final url = _playlist[idx]['url'] as String? ?? '';
-    if (url.isEmpty) return;
+  Future<void> _loadTrack(int index, {bool autoPlay = true}) async {
+    if (_playlist.isEmpty || index >= _playlist.length) return;
     await _player.stop();
-    await _player.setSource(UrlSource(url));
-    if (startMs > 0) await _player.seek(Duration(milliseconds: startMs));
-    if (autoPlay) await _player.resume();
-  }
-
-  Future<void> _togglePlay() async {
-    final posMs = _position.inMilliseconds;
-    if (_playing) {
-      await _player.pause();
-      WebSocketService.sendLTPause(widget.otherUid, widget.sessionId, posMs);
-      await FirestoreService.updateListenSession(
-          widget.sessionId, {'isPlaying': false, 'positionMs': posMs}, widget.myUid);
-    } else {
-      await _player.resume();
-      WebSocketService.sendLTPlay(widget.otherUid, widget.sessionId, posMs);
-      await FirestoreService.updateListenSession(
-          widget.sessionId, {'isPlaying': true, 'positionMs': posMs}, widget.myUid);
+    setState(() {
+      _currentIndex = index;
+      _position = Duration.zero;
+      _total = Duration.zero;
+    });
+    final url = _playlist[index]['url'] as String? ?? '';
+    if (url.isNotEmpty) {
+      await _player.setSourceUrl(url);
+      if (autoPlay) await _player.resume();
     }
   }
 
-  Future<void> _next() async {
+  // ── Controls ───────────────────────────────────────────────────────────────
+
+  Future<void> _play() async {
+    await _player.resume();
+    WebSocketService.sendLTPlay(
+        widget.otherUid, widget.sessionId, _position.inMilliseconds);
+  }
+
+  Future<void> _pause() async {
+    await _player.pause();
+    WebSocketService.sendLTPause(
+        widget.otherUid, widget.sessionId, _position.inMilliseconds);
+  }
+
+  Future<void> _nextTrack() async {
+    if (_playlist.isEmpty) return;
     final next = (_currentIndex + 1) % _playlist.length;
     await _loadTrack(next);
     WebSocketService.sendLTNext(widget.otherUid, widget.sessionId, next);
-    await FirestoreService.updateListenSession(
-        widget.sessionId, {'currentIndex': next, 'positionMs': 0, 'isPlaying': true}, widget.myUid);
   }
 
-  Future<void> _prev() async {
-    if (_position.inSeconds > 3) {
-      await _player.seek(Duration.zero);
-      return;
-    }
-    final prev = (_currentIndex - 1 + _playlist.length) % _playlist.length;
+  Future<void> _prevTrack() async {
+    if (_playlist.isEmpty) return;
+    final prev =
+        (_currentIndex - 1 + _playlist.length) % _playlist.length;
     await _loadTrack(prev);
     WebSocketService.sendLTNext(widget.otherUid, widget.sessionId, prev);
-    await FirestoreService.updateListenSession(
-        widget.sessionId, {'currentIndex': prev, 'positionMs': 0, 'isPlaying': true}, widget.myUid);
   }
+
+  // ── Remote events ──────────────────────────────────────────────────────────
+
+  void _onRemotePlay(Map<String, dynamic> msg) async {
+    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
+    _syncLock = true;
+    final pos = (msg['positionMs'] as int?) ?? 0;
+    await _player.seek(Duration(milliseconds: pos));
+    await _player.resume();
+    _syncLock = false;
+  }
+
+  void _onRemotePause(Map<String, dynamic> msg) async {
+    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
+    await _player.pause();
+  }
+
+  void _onRemoteSeek(Map<String, dynamic> msg) async {
+    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
+    final pos = (msg['positionMs'] as int?) ?? 0;
+    await _player.seek(Duration(milliseconds: pos));
+  }
+
+  void _onRemoteNext(Map<String, dynamic> msg) async {
+    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
+    final idx = (msg['index'] as int?) ?? 0;
+    await _loadTrack(idx);
+  }
+
+  void _onRemoteEnd(Map<String, dynamic> msg) {
+    if ((msg['sessionId'] ?? '') != widget.sessionId) return;
+    _player.stop();
+    if (mounted) Navigator.pop(context);
+  }
+
+  // ── Upload audio file (host only) ──────────────────────────────────────────
+
+  Future<void> _uploadAudioFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    setState(() => _uploading = true);
+    try {
+      for (final file in result.files) {
+        if (file.path == null) continue;
+        final bytes = await File(file.path!).readAsBytes();
+        final ext = file.extension ?? 'mp3';
+        final mime = _mimeForExt(ext);
+        final base64Str = base64Encode(bytes);
+        final uploaded = await ApiService.uploadFile(
+          base64: 'data:$mime;base64,$base64Str',
+          mimeType: mime,
+          fileName: file.name,
+        );
+        final url = uploaded['url'] as String? ?? '';
+        if (url.isNotEmpty) {
+          final track = {'title': file.name.replaceAll(RegExp(r'\.\w+$'), ''), 'url': url};
+          setState(() => _playlist.add(track));
+          // Persist to Firestore
+          await FirestoreService.updateListenSessionData(widget.sessionId, {
+            'playlist': _playlist,
+          });
+        }
+      }
+      if (_playlist.length == result.files.length && _currentIndex == 0) {
+        await _loadTrack(0);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ في الرفع: $e')));
+      }
+    }
+    if (mounted) setState(() => _uploading = false);
+  }
+
+  String _mimeForExt(String ext) {
+    switch (ext.toLowerCase()) {
+      case 'mp3': return 'audio/mpeg';
+      case 'm4a': return 'audio/mp4';
+      case 'ogg': return 'audio/ogg';
+      case 'wav': return 'audio/wav';
+      case 'flac': return 'audio/flac';
+      default: return 'audio/mpeg';
+    }
+  }
+
+  // ── End session ────────────────────────────────────────────────────────────
 
   Future<void> _endSession() async {
     WebSocketService.sendLTEnd(widget.otherUid, widget.sessionId);
-    await FirestoreService.updateListenSession(
-        widget.sessionId, {'status': 'ended'}, widget.myUid);
+    await _player.stop();
     if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  void dispose() {
+    WebSocketService.off('lt_play', _onRemotePlay);
+    WebSocketService.off('lt_pause', _onRemotePause);
+    WebSocketService.off('lt_seek', _onRemoteSeek);
+    WebSocketService.off('lt_next', _onRemoteNext);
+    WebSocketService.off('lt_end', _onRemoteEnd);
+    _player.dispose();
+    super.dispose();
   }
 
   String _fmt(Duration d) {
@@ -197,233 +244,312 @@ class _MusicPlayerScreenState extends State<MusicPlayerScreen> {
   }
 
   @override
-  void dispose() {
-    WebSocketService.off('lt_play', _onLtPlay);
-    WebSocketService.off('lt_pause', _onLtPause);
-    WebSocketService.off('lt_seek', _onLtSeek);
-    WebSocketService.off('lt_next', _onLtNext);
-    WebSocketService.off('lt_end', _onLtEnd);
-    _sessionSub?.cancel();
-    _player.dispose();
-    super.dispose();
-  }
-
-  String get _currentTitle {
-    if (_playlist.isEmpty) return 'No song';
-    return (_playlist[_currentIndex]['title'] as String? ?? 'Unknown');
-  }
-
-  @override
   Widget build(BuildContext context) {
     final progress = _total.inMilliseconds > 0
         ? (_position.inMilliseconds / _total.inMilliseconds).clamp(0.0, 1.0)
         : 0.0;
+    final currentTrack = _playlist.isNotEmpty
+        ? _playlist[_currentIndex]
+        : <String, dynamic>{};
+    final title =
+        currentTrack['title'] as String? ?? 'اختر أغنية';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0D1117),
-        foregroundColor: Colors.white,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('🎵 Listen Together',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            Text('with ${widget.otherName}',
-                style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.red),
-            onPressed: _endSession,
-            tooltip: 'End session',
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFF1A1A2E), Color(0xFF005C4B)],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Album art placeholder
-          Expanded(
-            child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 220,
-                    height: 220,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1C2333),
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF00A884).withOpacity(0.3),
-                          blurRadius: 40,
-                          spreadRadius: 5,
-                        ),
-                      ],
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // ── AppBar ──
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back_ios,
+                          color: Colors.white),
+                      onPressed: () => Navigator.pop(context),
                     ),
-                    child: const Icon(Icons.music_note,
-                        size: 80, color: Color(0xFF00A884)),
-                  ),
-                  const SizedBox(height: 32),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Text(
-                      _currentTitle,
+                    const Expanded(
+                      child: Text(
+                        'الاستماع معاً',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    if (widget.isHost)
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Colors.red),
+                        tooltip: 'إنهاء الجلسة',
+                        onPressed: _endSession,
+                      )
+                    else
+                      const SizedBox(width: 48),
+                  ],
+                ),
+              ),
+
+              // ── Album art ──
+              const SizedBox(height: 24),
+              Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00A884).withOpacity(0.2),
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00A884).withOpacity(0.3),
+                      blurRadius: 40,
+                      spreadRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Icon(
+                  _playing ? Icons.music_note : Icons.headphones,
+                  size: 80,
+                  color: const Color(0xFF00A884),
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // ── Track info ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  children: [
+                    Text(
+                      title,
+                      textAlign: TextAlign.center,
                       style: const TextStyle(
                           color: Colors.white,
                           fontSize: 20,
                           fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${_currentIndex + 1} / ${_playlist.length} songs',
-                    style: const TextStyle(color: Colors.grey, fontSize: 13),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    Text(
+                      '${_currentIndex + 1} / ${_playlist.length}',
+                      style: const TextStyle(
+                          color: Colors.white54, fontSize: 13),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ),
+              const SizedBox(height: 20),
 
-          // Progress bar
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              children: [
-                SliderTheme(
-                  data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: const Color(0xFF00A884),
-                    inactiveTrackColor: Colors.grey[800],
-                    thumbColor: const Color(0xFF00A884),
-                    trackHeight: 3,
-                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
-                  ),
-                  child: Slider(
-                    value: progress,
-                    onChanged: (v) async {
-                      final pos =
-                          Duration(milliseconds: (v * _total.inMilliseconds).round());
-                      await _player.seek(pos);
-                      WebSocketService.sendLTSeek(widget.otherUid,
-                          widget.sessionId, pos.inMilliseconds);
-                    },
-                  ),
+              // ── Progress ──
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  children: [
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        activeTrackColor: const Color(0xFF00A884),
+                        inactiveTrackColor: Colors.white24,
+                        thumbColor: const Color(0xFF00A884),
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6),
+                        overlayShape: SliderComponentShape.noOverlay,
+                      ),
+                      child: Slider(
+                        value: progress,
+                        onChanged: widget.isHost
+                            ? (v) async {
+                                final ms =
+                                    (v * _total.inMilliseconds).round();
+                                await _player.seek(
+                                    Duration(milliseconds: ms));
+                                WebSocketService.sendLTSeek(widget.otherUid,
+                                    widget.sessionId, ms);
+                              }
+                            : null,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(_fmt(_position),
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 12)),
+                          Text(_fmt(_total),
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(_fmt(_position),
-                          style:
-                              const TextStyle(color: Colors.grey, fontSize: 12)),
-                      Text(_fmt(_total),
-                          style:
-                              const TextStyle(color: Colors.grey, fontSize: 12)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
+              ),
+              const SizedBox(height: 16),
 
-          // Controls
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.skip_previous,
-                      color: Colors.white, size: 32),
-                  onPressed: _playlist.length > 1 ? _prev : null,
-                ),
-                GestureDetector(
-                  onTap: _togglePlay,
-                  child: Container(
+              // ── Controls ──
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.skip_previous,
+                        color: Colors.white, size: 36),
+                    onPressed: widget.isHost ? _prevTrack : null,
+                  ),
+                  Container(
                     width: 64,
                     height: 64,
                     decoration: const BoxDecoration(
                       color: Color(0xFF00A884),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(
-                      _playing ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white,
-                      size: 36,
+                    child: IconButton(
+                      icon: Icon(
+                        _playing ? Icons.pause : Icons.play_arrow,
+                        color: Colors.white,
+                        size: 36,
+                      ),
+                      onPressed: widget.isHost
+                          ? () => _playing ? _pause() : _play()
+                          : null,
                     ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.skip_next,
-                      color: Colors.white, size: 32),
-                  onPressed: _playlist.length > 1 ? _next : null,
-                ),
-              ],
-            ),
-          ),
-
-          // Playlist
-          if (_playlist.length > 1)
-            Container(
-              height: 160,
-              color: const Color(0xFF0D1117),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-                    child: Text('Playlist',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14)),
-                  ),
-                  Expanded(
-                    child: ListView.builder(
-                      itemCount: _playlist.length,
-                      itemBuilder: (_, i) {
-                        final track = _playlist[i];
-                        final isActive = i == _currentIndex;
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            Icons.music_note,
-                            color: isActive
-                                ? const Color(0xFF00A884)
-                                : Colors.grey,
-                            size: 18,
-                          ),
-                          title: Text(
-                            track['title'] as String? ?? 'Track ${i + 1}',
-                            style: TextStyle(
-                              color: isActive
-                                  ? const Color(0xFF00A884)
-                                  : Colors.white70,
-                              fontSize: 13,
-                              fontWeight: isActive
-                                  ? FontWeight.bold
-                                  : FontWeight.normal,
-                            ),
-                          ),
-                          onTap: () async {
-                            await _loadTrack(i);
-                            WebSocketService.sendLTNext(
-                                widget.otherUid, widget.sessionId, i);
-                          },
-                        );
-                      },
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.skip_next,
+                        color: Colors.white, size: 36),
+                    onPressed: widget.isHost ? _nextTrack : null,
                   ),
                 ],
               ),
-            ),
-        ],
+              const SizedBox(height: 12),
+
+              // ── Host: upload audio files ──
+              if (widget.isHost) ...[
+                _uploading
+                    ? const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Color(0xFF00A884))),
+                            SizedBox(width: 8),
+                            Text('جارٍ رفع الملف...',
+                                style: TextStyle(
+                                    color: Colors.white70, fontSize: 13)),
+                          ],
+                        ),
+                      )
+                    : TextButton.icon(
+                        onPressed: _uploadAudioFile,
+                        icon: const Icon(Icons.upload_file,
+                            color: Color(0xFF00A884)),
+                        label: const Text('رفع ملف صوتي',
+                            style: TextStyle(color: Color(0xFF00A884))),
+                      ),
+              ],
+
+              // ── Playlist ──
+              Expanded(
+                child: _playlist.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.queue_music,
+                                size: 48, color: Colors.white24),
+                            const SizedBox(height: 8),
+                            Text(
+                              widget.isHost
+                                  ? 'ارفع ملفات صوتية لتبدأ الجلسة'
+                                  : 'في انتظار المضيف لإضافة موسيقى...',
+                              style: const TextStyle(
+                                  color: Colors.white54, fontSize: 13),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 8),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.queue_music,
+                                    color: Colors.white54, size: 16),
+                                const SizedBox(width: 6),
+                                Text('قائمة التشغيل (${_playlist.length})',
+                                    style: const TextStyle(
+                                        color: Colors.white54,
+                                        fontSize: 13)),
+                              ],
+                            ),
+                          ),
+                          Expanded(
+                            child: ListView.builder(
+                              itemCount: _playlist.length,
+                              itemBuilder: (_, i) {
+                                final track = _playlist[i];
+                                final isActive = i == _currentIndex;
+                                return ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    isActive && _playing
+                                        ? Icons.graphic_eq
+                                        : Icons.music_note,
+                                    color: isActive
+                                        ? const Color(0xFF00A884)
+                                        : Colors.white38,
+                                    size: 18,
+                                  ),
+                                  title: Text(
+                                    track['title'] as String? ??
+                                        'مقطع ${i + 1}',
+                                    style: TextStyle(
+                                      color: isActive
+                                          ? const Color(0xFF00A884)
+                                          : Colors.white70,
+                                      fontSize: 13,
+                                      fontWeight: isActive
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                  onTap: widget.isHost
+                                      ? () async {
+                                          await _loadTrack(i);
+                                          WebSocketService.sendLTNext(
+                                              widget.otherUid,
+                                              widget.sessionId,
+                                              i);
+                                        }
+                                      : null,
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

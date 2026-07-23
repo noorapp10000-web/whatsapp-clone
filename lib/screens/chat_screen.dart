@@ -1,9 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import '../models/conversation_model.dart';
 import '../models/message_model.dart';
 import '../services/firestore_service.dart';
@@ -32,11 +35,20 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _replyToId;
   MessageModel? _replyMsg;
 
-  // Typing indicator
+  // Typing
   bool _otherTyping = false;
   Timer? _typingTimer;
   bool _iAmTyping = false;
   Timer? _myTypingTimer;
+
+  // Emoji
+  bool _showEmoji = false;
+  final _focusNode = FocusNode();
+
+  // Audio recording
+  final _recorder = AudioRecorder();
+  bool _recording = false;
+  String? _recordPath;
 
   String get _otherUid => widget.conversation.otherUid(widget.myUid);
   Map<String, dynamic> get _otherP =>
@@ -52,6 +64,12 @@ class _ChatScreenState extends State<ChatScreen> {
     WebSocketService.on('typing_stop', _onTypingStop);
     FirestoreService.markMessagesRead(widget.conversation.id, widget.myUid)
         .ignore();
+
+    _focusNode.addListener(() {
+      if (_focusNode.hasFocus && _showEmoji) {
+        setState(() => _showEmoji = false);
+      }
+    });
   }
 
   void _onAnswer(Map<String, dynamic> msg) {
@@ -70,9 +88,8 @@ class _ChatScreenState extends State<ChatScreen> {
     if ((msg['fromUid'] ?? '') != _otherUid) return;
     _typingTimer?.cancel();
     if (mounted) setState(() => _otherTyping = true);
-    _typingTimer = Timer(const Duration(seconds: 4), () {
-      if (mounted) setState(() => _otherTyping = false);
-    });
+    _typingTimer = Timer(const Duration(seconds: 4),
+        () { if (mounted) setState(() => _otherTyping = false); });
   }
 
   void _onTypingStop(Map<String, dynamic> msg) {
@@ -102,31 +119,29 @@ class _ChatScreenState extends State<ChatScreen> {
     WebSocketService.off('typing_stop', _onTypingStop);
     _ctrl.dispose();
     _scroll.dispose();
+    _focusNode.dispose();
     _typingTimer?.cancel();
     _myTypingTimer?.cancel();
+    _recorder.dispose();
     super.dispose();
   }
 
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 150), () {
       if (_scroll.hasClients) {
-        _scroll.animateTo(
-          _scroll.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+        _scroll.animateTo(_scroll.position.maxScrollExtent,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut);
       }
     });
   }
 
-  // ─── Send text ─────────────────────────────────────────────────────────────
+  // ── Send text ──────────────────────────────────────────────────────────────
   Future<void> _sendText() async {
     final text = _ctrl.text.trim();
     if (text.isEmpty || _sending) return;
     setState(() => _sending = true);
     _ctrl.clear();
-    _iAmTyping = false;
-    WebSocketService.sendTyping(_otherUid, isTyping: false);
     try {
       await FirestoreService.sendMessage(
         widget.conversation.id,
@@ -135,298 +150,272 @@ class _ChatScreenState extends State<ChatScreen> {
         content: text,
         replyToId: _replyToId,
       );
-      if (_replyToId != null) {
-        setState(() {
-          _replyToId = null;
-          _replyMsg = null;
-        });
-      }
+      setState(() { _replyToId = null; _replyMsg = null; });
       _scrollToBottom();
-      if (_otherUid.isNotEmpty) {
-        ApiService.sendNotification(
-          targetUid: _otherUid,
-          title: (_otherP['displayName'] ?? _convName) as String,
-          body: text,
-          data: {'conversationId': widget.conversation.id, 'type': 'message'},
-        ).ignore();
-      }
     } catch (_) {}
     if (mounted) setState(() => _sending = false);
   }
 
-  // ─── Upload file helper ────────────────────────────────────────────────────
-  Future<void> _uploadAndSend(
-      String path, String mime, String name, String type,
-      {int? durationMs}) async {
-    if (mounted) setState(() => _sending = true);
+  // ── Send image ─────────────────────────────────────────────────────────────
+  Future<void> _pickImage(ImageSource src) async {
+    Navigator.pop(context);
+    final p = await ImagePicker().pickImage(source: src, imageQuality: 80);
+    if (p == null) return;
+    setState(() => _sending = true);
     try {
-      final bytes = await File(path).readAsBytes();
+      final bytes = await File(p.path).readAsBytes();
       final result = await ApiService.uploadFile(
-        base64: 'data:$mime;base64,${base64Encode(bytes)}',
-        mimeType: mime,
-        fileName: name,
+        base64: 'data:image/jpeg;base64,${base64Encode(bytes)}',
+        mimeType: 'image/jpeg',
+        fileName: 'img_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
       await FirestoreService.sendMessage(
         widget.conversation.id,
         widget.myUid,
-        type: type,
-        fileUrl: result['url'] as String,
-        fileName: name,
-        fileSize: result['size'] as int?,
-        mimeType: mime,
-        durationMs: durationMs,
+        type: 'image',
+        fileUrl: result['url'] as String?,
+        replyToId: _replyToId,
       );
+      setState(() { _replyToId = null; _replyMsg = null; });
       _scrollToBottom();
-      if (_otherUid.isNotEmpty) {
-        final body = type == 'image'
-            ? '📷 Image'
-            : type == 'video'
-                ? '🎥 Video'
-                : '📎 $name';
-        ApiService.sendNotification(
-          targetUid: _otherUid,
-          title: (_otherP['displayName'] ?? _convName) as String,
-          body: body,
-          data: {'conversationId': widget.conversation.id, 'type': type},
-        ).ignore();
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Upload failed: $e')));
-      }
+      if (mounted) ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('خطأ: $e')));
     }
     if (mounted) setState(() => _sending = false);
   }
 
-  // ─── Media pickers ─────────────────────────────────────────────────────────
-  Future<void> _pickImage() async {
-    final p = await ImagePicker()
-        .pickImage(source: ImageSource.gallery, imageQuality: 75);
-    if (p == null) return;
-    await _uploadAndSend(p.path, 'image/jpeg', p.name, 'image');
-  }
-
-  Future<void> _capturePhoto() async {
-    final p = await ImagePicker()
-        .pickImage(source: ImageSource.camera, imageQuality: 75);
-    if (p == null) return;
-    await _uploadAndSend(p.path, 'image/jpeg', p.name, 'image');
-  }
-
-  Future<void> _pickVideo() async {
-    final p = await ImagePicker().pickVideo(source: ImageSource.gallery);
-    if (p == null) return;
-    await _uploadAndSend(p.path, 'video/mp4', p.name, 'video');
-  }
-
+  // ── Send file ──────────────────────────────────────────────────────────────
   Future<void> _pickFile() async {
-    final r = await FilePicker.platform.pickFiles();
-    if (r == null || r.files.isEmpty || r.files.first.path == null) return;
-    final f = r.files.first;
-    await _uploadAndSend(
-        f.path!, 'application/${f.extension ?? 'octet-stream'}', f.name, 'file');
-  }
-
-  // ─── Listen Together ───────────────────────────────────────────────────────
-  Future<void> _showListenTogetherDialog() async {
-    final playlist = <Map<String, dynamic>>[];
-
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, setDlg) {
-        final urlCtrl = TextEditingController();
-        final titleCtrl = TextEditingController();
-        return AlertDialog(
-          title: const Row(children: [
-            Icon(Icons.headphones, color: Color(0xFF00A884)),
-            SizedBox(width: 8),
-            Text('Listen Together'),
-          ]),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Add songs using direct audio URLs (MP3, M4A, OGG…)',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: titleCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Song title',
-                    prefixIcon: Icon(Icons.music_note),
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: urlCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Audio URL',
-                    prefixIcon: Icon(Icons.link),
-                    hintText: 'https://example.com/song.mp3',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.url,
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add to playlist'),
-                    onPressed: () {
-                      final t = titleCtrl.text.trim();
-                      final u = urlCtrl.text.trim();
-                      if (t.isEmpty || u.isEmpty) return;
-                      setDlg(() {
-                        playlist.add({'title': t, 'url': u});
-                        titleCtrl.clear();
-                        urlCtrl.clear();
-                      });
-                    },
-                  ),
-                ),
-                if (playlist.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  const Text('Playlist:',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  ...playlist.asMap().entries.map((e) => ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.music_note,
-                            size: 16, color: Color(0xFF00A884)),
-                        title: Text(e.value['title'] as String,
-                            style: const TextStyle(fontSize: 13)),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.remove_circle,
-                              color: Colors.red, size: 18),
-                          onPressed: () =>
-                              setDlg(() => playlist.removeAt(e.key)),
-                        ),
-                      )),
-                ],
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.send),
-              label: const Text('Invite'),
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00A884),
-                  foregroundColor: Colors.white),
-              onPressed: playlist.isEmpty ? null : () => Navigator.pop(ctx, true),
-            ),
-          ],
-        );
-      }),
-    );
-
-    if (playlist.isEmpty) return;
+    Navigator.pop(context);
+    final result =
+        await FilePicker.platform.pickFiles(withData: false, withReadStream: false);
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.path == null) return;
+    setState(() => _sending = true);
     try {
-      final sessionId = await FirestoreService.createListenSession(
-        creatorUid: widget.myUid,
-        participantUids: [_otherUid],
-        playlist: playlist,
+      final bytes = await File(file.path!).readAsBytes();
+      final mime = _mimeForFile(file.extension ?? '');
+      final uploaded = await ApiService.uploadFile(
+        base64: 'data:$mime;base64,${base64Encode(bytes)}',
+        mimeType: mime,
+        fileName: file.name,
       );
       await FirestoreService.sendMessage(
         widget.conversation.id,
         widget.myUid,
-        type: 'listen_together',
-        ltSessionId: sessionId,
-        ltUrl: playlist.first['url'] as String,
-        ltTitle: playlist.first['title'] as String,
-        ltPlaylist: playlist,
+        type: 'file',
+        fileUrl: uploaded['url'] as String?,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: mime,
+        replyToId: _replyToId,
       );
-      WebSocketService.sendLTInvite(_otherUid, sessionId);
+      setState(() { _replyToId = null; _replyMsg = null; });
       _scrollToBottom();
-
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => MusicPlayerScreen(
-              sessionId: sessionId,
-              myUid: widget.myUid,
-              otherUid: _otherUid,
-              otherName: _convName,
-              isCreator: true,
-            ),
-          ),
-        );
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
-      }
+      if (mounted) ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    }
+    if (mounted) setState(() => _sending = false);
+  }
+
+  String _mimeForFile(String ext) {
+    switch (ext.toLowerCase()) {
+      case 'pdf': return 'application/pdf';
+      case 'doc': case 'docx': return 'application/msword';
+      case 'mp3': return 'audio/mpeg';
+      case 'm4a': return 'audio/mp4';
+      case 'ogg': return 'audio/ogg';
+      case 'mp4': return 'video/mp4';
+      case 'jpg': case 'jpeg': return 'image/jpeg';
+      case 'png': return 'image/png';
+      default: return 'application/octet-stream';
     }
   }
 
-  void _joinListenTogether(String sessionId) {
-    WebSocketService.sendLTAccept(_otherUid, sessionId);
-    FirestoreService.updateListenSession(
-        sessionId, {'status': 'active', 'isPlaying': true}, widget.myUid);
+  // ── Voice recording ────────────────────────────────────────────────────────
+  Future<void> _startRecording() async {
+    final hasPermission = await _recorder.hasPermission();
+    if (!hasPermission) return;
+    final dir = await getTemporaryDirectory();
+    final path =
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
+    setState(() { _recording = true; _recordPath = path; });
+  }
+
+  Future<void> _stopRecordingAndSend() async {
+    final path = await _recorder.stop();
+    setState(() => _recording = false);
+    if (path == null) return;
+    final file = File(path);
+    if (!await file.exists()) return;
+    setState(() => _sending = true);
+    try {
+      final bytes = await file.readAsBytes();
+      final durationMs = await _getAudioDuration(file);
+      final uploaded = await ApiService.uploadFile(
+        base64: 'data:audio/mp4;base64,${base64Encode(bytes)}',
+        mimeType: 'audio/mp4',
+        fileName: 'voice_${DateTime.now().millisecondsSinceEpoch}.m4a',
+      );
+      await FirestoreService.sendMessage(
+        widget.conversation.id,
+        widget.myUid,
+        type: 'voice',
+        fileUrl: uploaded['url'] as String?,
+        durationMs: durationMs,
+        replyToId: _replyToId,
+      );
+      setState(() { _replyToId = null; _replyMsg = null; });
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('خطأ في إرسال الرسالة الصوتية: $e')));
+    }
+    if (mounted) setState(() => _sending = false);
+    // Clean up
+    file.delete().ignore();
+  }
+
+  Future<void> _cancelRecording() async {
+    await _recorder.stop();
+    setState(() => _recording = false);
+  }
+
+  Future<int?> _getAudioDuration(File file) async {
+    // Approximate from file size: ~16kbps for AAC ≈ 2KB/s
+    final size = await file.length();
+    return (size / 2000 * 1000).round();
+  }
+
+  // ── Listen Together ────────────────────────────────────────────────────────
+  Future<void> _sendListenTogether() async {
+    Navigator.pop(context);
+    // Host navigates to session FIRST, then invite is sent from there
+    final sessionId =
+        'lt_${widget.conversation.id}_${DateTime.now().millisecondsSinceEpoch}';
+    await FirestoreService.createListenSessionById(sessionId, {
+      'host': widget.myUid,
+      'participants': [widget.myUid],
+      'playlist': [],
+      'currentIndex': 0,
+    });
+
+    // Send invite message in chat
+    await FirestoreService.sendMessage(
+      widget.conversation.id,
+      widget.myUid,
+      type: 'listen_together',
+      content: 'دعوة للاستماع معاً 🎵',
+      ltSessionId: sessionId,
+      ltTitle: 'جلسة موسيقية مشتركة',
+    );
+
+    // Notify via WebSocket
+    WebSocketService.sendLTInvite(_otherUid, sessionId);
+
+    // HOST navigates to music player and stays there
+    if (!mounted) return;
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => MusicPlayerScreen(
           sessionId: sessionId,
-          myUid: widget.myUid,
           otherUid: _otherUid,
-          otherName: _convName,
-          isCreator: false,
+          isHost: true,
         ),
       ),
     );
   }
 
-  // ─── Attachment menu ───────────────────────────────────────────────────────
+  // ── React & Reply ──────────────────────────────────────────────────────────
+  Future<void> _reactMsg(String msgId, String emoji) async {
+    await FirestoreService.reactToMessage(
+        widget.conversation.id, msgId, widget.myUid, emoji);
+  }
+
+  void _setReply(String msgId, List<MessageModel> msgs) {
+    final msg = msgs.firstWhere((m) => m.id == msgId,
+        orElse: () => msgs.first);
+    setState(() { _replyToId = msgId; _replyMsg = msg; });
+  }
+
+  Future<void> _deleteMsg(String msgId) async {
+    await FirestoreService.deleteMessage(widget.conversation.id, msgId);
+  }
+
+  Future<void> _joinListenSession(String sessionId) async {
+    WebSocketService.sendLTAccept(widget.myUid, sessionId);
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => MusicPlayerScreen(
+        sessionId: sessionId,
+        otherUid: _otherUid,
+        isHost: false,
+      ),
+    ));
+  }
+
+  // ── Calls ──────────────────────────────────────────────────────────────────
+  Future<void> _startCall(bool isVideo) async {
+    final callId = await FirestoreService.logCall(
+        widget.myUid, _otherUid, isVideo ? 'video' : 'voice');
+    if (!mounted) return;
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => CallScreen(
+        otherUid: _otherUid,
+        otherName: (_otherP['displayName'] ?? _convName) as String,
+        otherPhoto: _otherP['photoUrl'] as String?,
+        isVideo: isVideo,
+        isIncoming: false,
+        convId: widget.conversation.id,
+        callId: callId,
+      ),
+    ));
+    ApiService.sendNotification(
+      targetUid: _otherUid,
+      title: isVideo ? '📹 مكالمة فيديو واردة' : '📞 مكالمة صوتية واردة',
+      body: 'اضغط للرد',
+      data: {
+        'type': isVideo ? 'video_call' : 'voice_call',
+        'callerUid': widget.myUid,
+      },
+    ).ignore();
+  }
+
+  // ── Attach menu ────────────────────────────────────────────────────────────
   void _showAttachMenu() {
+    if (_showEmoji) setState(() => _showEmoji = false);
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (_) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
+                width: 40, height: 4,
+                margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
                     color: Colors.grey[300],
                     borderRadius: BorderRadius.circular(2)),
               ),
-              GridView.count(
-                crossAxisCount: 3,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _menuItem(Icons.photo, 'Gallery', Colors.purple, _pickImage),
-                  _menuItem(
-                      Icons.camera_alt, 'Camera', Colors.red, _capturePhoto),
-                  _menuItem(Icons.videocam, 'Video', Colors.orange, _pickVideo),
-                  _menuItem(Icons.attach_file, 'File', Colors.teal, _pickFile),
-                  _menuItem(Icons.headphones, 'Listen\nTogether',
-                      const Color(0xFF00A884), () {
-                    Navigator.pop(context);
-                    _showListenTogetherDialog();
-                  }),
+                  _menuItem(Icons.image, 'معرض الصور', Colors.purple,
+                      () => _pickImage(ImageSource.gallery)),
+                  _menuItem(Icons.camera_alt, 'الكاميرا', Colors.red,
+                      () => _pickImage(ImageSource.camera)),
+                  _menuItem(Icons.attach_file, 'ملف', Colors.teal,
+                      _pickFile),
+                  _menuItem(Icons.headphones, 'استماع معاً', Colors.blue,
+                      _sendListenTogether),
                 ],
               ),
             ],
@@ -439,18 +428,14 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _menuItem(
       IconData icon, String label, Color color, VoidCallback onTap) {
     return GestureDetector(
-      onTap: () {
-        Navigator.pop(context);
-        onTap();
-      },
+      onTap: onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 56,
-            height: 56,
-            decoration:
-                BoxDecoration(color: color.withOpacity(0.12), shape: BoxShape.circle),
+            width: 56, height: 56,
+            decoration: BoxDecoration(
+                color: color.withOpacity(0.12), shape: BoxShape.circle),
             child: Icon(icon, color: color, size: 26),
           ),
           const SizedBox(height: 6),
@@ -462,279 +447,441 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ─── Calls ─────────────────────────────────────────────────────────────────
-  Future<void> _startCall(bool isVideo) async {
-    final callId = await FirestoreService.logCall(
-        widget.myUid, _otherUid, isVideo ? 'video' : 'voice');
-    if (!mounted) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => CallScreen(
-          otherUid: _otherUid,
-          otherName: (_otherP['displayName'] ?? _convName) as String,
-          otherPhoto: _otherP['photoUrl'] as String?,
-          isVideo: isVideo,
-          isIncoming: false,
-          convId: widget.conversation.id,
-          callId: callId,
+  // ── Sticker picker (simple) ────────────────────────────────────────────────
+  void _showStickerPicker() {
+    const stickers = ['😀','😂','😍','🥰','😎','🤩','😢','😡','🥺','🤔',
+      '👍','👎','❤️','🔥','🎉','🎊','💯','✅','🙏','🤣',
+      '😮','😴','🤗','😏','🥳','💪','👏','🤝','✌️','🫡'];
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const Text('الملصقات',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 180,
+              child: GridView.builder(
+                padding: const EdgeInsets.all(12),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 6,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                ),
+                itemCount: stickers.length,
+                itemBuilder: (_, i) => GestureDetector(
+                  onTap: () {
+                    Navigator.pop(context);
+                    _ctrl.text += stickers[i];
+                    setState(() {});
+                  },
+                  child: Text(stickers[i],
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 28)),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
         ),
       ),
     );
-    ApiService.sendNotification(
-      targetUid: _otherUid,
-      title: isVideo ? '📹 Incoming Video Call' : '📞 Incoming Voice Call',
-      body: 'Tap to answer',
-      data: {
-        'type': isVideo ? 'video_call' : 'voice_call',
-        'callerUid': widget.myUid,
-      },
-    ).ignore();
   }
 
-  void _setReply(String msgId, List<MessageModel> msgs) {
-    final msg = msgs.firstWhere((m) => m.id == msgId,
-        orElse: () => msgs.first);
-    setState(() {
-      _replyToId = msgId;
-      _replyMsg = msg;
-    });
-  }
-
-  Future<void> _deleteMsg(String msgId) async {
-    await FirestoreService.deleteMessage(widget.conversation.id, msgId);
-  }
-
-  Future<void> _reactMsg(String msgId, String emoji) async {
-    await FirestoreService.addReaction(
-        widget.conversation.id, msgId, widget.myUid, emoji);
-  }
-
-  // ─── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final other = _otherP;
-    final otherName = (other['displayName'] ?? _convName) as String;
-    final otherPhoto = other['photoUrl'] as String?;
-    final isOnline = (other['isOnline'] ?? false) as bool;
+    final isGroup = widget.conversation.type == 'group';
+    final photo = widget.conversation.displayPhoto(widget.myUid);
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF0F2F5),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF00A884),
-        leadingWidth: 32,
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: Colors.white,
-              backgroundImage:
-                  otherPhoto != null ? NetworkImage(otherPhoto) : null,
-              child: otherPhoto == null
-                  ? Text(
-                      otherName.isNotEmpty ? otherName[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                          color: Color(0xFF00A884), fontWeight: FontWeight.bold),
-                    )
-                  : null,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(otherName,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold)),
-                  if (_otherTyping)
-                    const Text('typing...',
-                        style: TextStyle(color: Colors.white70, fontSize: 11))
-                  else if (isOnline)
-                    const Text('online',
-                        style: TextStyle(color: Colors.white70, fontSize: 11)),
-                ],
+    return PopScope(
+      canPop: !_showEmoji,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _showEmoji) setState(() => _showEmoji = false);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: const Color(0xFF00A884),
+          foregroundColor: Colors.white,
+          titleSpacing: 0,
+          leadingWidth: 32,
+          title: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: Colors.white24,
+                backgroundImage: photo != null ? NetworkImage(photo) : null,
+                child: photo == null
+                    ? Text(_convName.isNotEmpty ? _convName[0].toUpperCase() : '?',
+                        style: const TextStyle(
+                            color: Colors.white, fontWeight: FontWeight.bold))
+                    : null,
               ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(_convName,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis),
+                    if (_otherTyping)
+                      const Text('يكتب...',
+                          style: TextStyle(
+                              fontSize: 12, color: Colors.white70))
+                    else if (!isGroup)
+                      StreamBuilder<bool>(
+                        stream: FirestoreService.onlineStream(_otherUid),
+                        builder: (_, snap) => Text(
+                          (snap.data ?? false) ? 'متصل الآن' : 'غير متصل',
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.white70),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            if (!isGroup) ...[
+              IconButton(
+                icon: const Icon(Icons.call, color: Colors.white),
+                tooltip: 'مكالمة صوتية',
+                onPressed: () => _startCall(false),
+              ),
+              IconButton(
+                icon: const Icon(Icons.videocam, color: Colors.white),
+                tooltip: 'مكالمة فيديو',
+                onPressed: () => _startCall(true),
+              ),
+            ],
+            IconButton(
+              icon: const Icon(Icons.more_vert, color: Colors.white),
+              onPressed: () {},
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call, color: Colors.white),
-            onPressed: () => _startCall(false),
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam, color: Colors.white),
-            onPressed: () => _startCall(true),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Messages
-          Expanded(
-            child: StreamBuilder<List<MessageModel>>(
-              stream:
-                  FirestoreService.messagesStream(widget.conversation.id),
-              builder: (_, snap) {
-                if (!snap.hasData) {
-                  return const Center(
-                      child: CircularProgressIndicator(
-                          color: Color(0xFF00A884)));
-                }
-                final msgs = snap.data!;
-                if (msgs.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.chat_bubble_outline,
-                            size: 64, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        Text('Say hi to $otherName! 👋',
-                            style: const TextStyle(
-                                color: Colors.grey, fontSize: 16)),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'Your messages are end-to-end encrypted',
-                          style:
-                              TextStyle(color: Colors.grey, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                WidgetsBinding.instance
-                    .addPostFrameCallback((_) => _scrollToBottom());
-                return ListView.builder(
-                  controller: _scroll,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 8),
-                  itemCount: msgs.length,
-                  itemBuilder: (_, i) {
-                    final msg = msgs[i];
-                    final isMe = msg.senderId == widget.myUid;
-                    return MessageBubble(
-                      key: ValueKey(msg.id),
-                      message: msg,
-                      isMe: isMe,
-                      onReply: (id) => _setReply(id, msgs),
-                      onDelete: _deleteMsg,
-                      onReact: _reactMsg,
-                      onJoinListen: _joinListenTogether,
+        body: Column(
+          children: [
+            // ── Messages ──
+            Expanded(
+              child: StreamBuilder<List<MessageModel>>(
+                stream: FirestoreService.messagesStream(widget.conversation.id),
+                builder: (ctx, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Center(
+                        child: CircularProgressIndicator(
+                            color: Color(0xFF00A884)));
+                  }
+                  final msgs = snap.data ?? [];
+                  if (msgs.isEmpty) {
+                    return Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.chat_bubble_outline,
+                              size: 64, color: Colors.grey[300]),
+                          const SizedBox(height: 12),
+                          Text('لا توجد رسائل بعد',
+                              style: TextStyle(color: Colors.grey[500])),
+                          const SizedBox(height: 4),
+                          Text('ابدأ المحادثة الآن! 👋',
+                              style: TextStyle(
+                                  color: Colors.grey[400], fontSize: 13)),
+                        ],
+                      ),
                     );
-                  },
-                );
-              },
+                  }
+                  WidgetsBinding.instance
+                      .addPostFrameCallback((_) => _scrollToBottom());
+                  return ListView.builder(
+                    controller: _scroll,
+                    padding: const EdgeInsets.symmetric(
+                        vertical: 8, horizontal: 4),
+                    itemCount: msgs.length,
+                    itemBuilder: (ctx, i) {
+                      final msg = msgs[i];
+                      final isMe = msg.senderId == widget.myUid;
+                      // Group date separator
+                      final showDate = i == 0 ||
+                          !_sameDay(msgs[i - 1].createdAt, msg.createdAt);
+                      return Column(
+                        children: [
+                          if (showDate) _dateSeparator(msg.createdAt),
+                          MessageBubble(
+                            key: ValueKey(msg.id),
+                            message: msg,
+                            isMe: isMe,
+                            onReply: (_) => _setReply(msg.id, msgs),
+                            onDelete: _deleteMsg,
+                            onReact: _reactMsg,
+                            onJoinListen: _joinListenSession,
+                          ),
+                        ],
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
 
-          // Reply preview
-          if (_replyMsg != null)
+            // ── Reply preview ──
+            if (_replyMsg != null)
+              Container(
+                color: const Color(0xFFF0FFF8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  children: [
+                    Container(
+                        width: 3,
+                        height: 36,
+                        color: const Color(0xFF00A884)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('رد على',
+                              style: TextStyle(
+                                  color: Color(0xFF00A884),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold)),
+                          Text(
+                            _replyMsg!.content ??
+                                (_replyMsg!.type == 'voice'
+                                    ? '🎤 رسالة صوتية'
+                                    : '📎 ملف'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close,
+                          size: 18, color: Colors.grey),
+                      onPressed: () =>
+                          setState(() { _replyToId = null; _replyMsg = null; }),
+                    ),
+                  ],
+                ),
+              ),
+
+            // ── Input bar ──
             Container(
-              color: Colors.white,
+              color: const Color(0xFFF0F2F5),
               padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 children: [
-                  Container(
-                      width: 3, height: 40, color: const Color(0xFF00A884)),
-                  const SizedBox(width: 8),
+                  // Emoji button
+                  IconButton(
+                    icon: Icon(
+                      _showEmoji ? Icons.keyboard : Icons.emoji_emotions,
+                      color: Colors.grey[600],
+                    ),
+                    onPressed: () {
+                      if (_showEmoji) {
+                        _focusNode.requestFocus();
+                      } else {
+                        _focusNode.unfocus();
+                      }
+                      setState(() => _showEmoji = !_showEmoji);
+                    },
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                        minWidth: 36, minHeight: 36),
+                  ),
+                  // Sticker button
+                  IconButton(
+                    icon: Icon(Icons.sticky_note_2_outlined,
+                        color: Colors.grey[600]),
+                    onPressed: _showStickerPicker,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                        minWidth: 36, minHeight: 36),
+                  ),
+                  // Text field
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _replyMsg!.senderId == widget.myUid
-                              ? 'You'
-                              : otherName,
-                          style: const TextStyle(
-                              color: Color(0xFF00A884),
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12),
-                        ),
-                        Text(
-                          _replyMsg!.content ??
-                              _replyMsg!.fileName ??
-                              _replyMsg!.type,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.grey),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _ctrl,
+                              focusNode: _focusNode,
+                              onChanged: _onTextChanged,
+                              maxLines: 5,
+                              minLines: 1,
+                              textDirection: TextDirection.rtl,
+                              style: const TextStyle(fontSize: 15),
+                              decoration: const InputDecoration(
+                                hintText: 'اكتب رسالة...',
+                                hintTextDirection: TextDirection.rtl,
+                                border: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 10),
+                                hintStyle: TextStyle(color: Colors.grey),
+                              ),
+                            ),
+                          ),
+                          // Attach
+                          IconButton(
+                            icon: Icon(Icons.attach_file,
+                                color: Colors.grey[600]),
+                            onPressed: _sending ? null : _showAttachMenu,
+                            padding: const EdgeInsets.only(left: 4),
+                            constraints: const BoxConstraints(
+                                minWidth: 36, minHeight: 36),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => setState(() {
-                      _replyToId = null;
-                      _replyMsg = null;
-                    }),
-                  ),
+                  const SizedBox(width: 6),
+                  // Mic / Send / Recording
+                  if (_recording)
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: _cancelRecording,
+                          child: const CircleAvatar(
+                            radius: 22,
+                            backgroundColor: Colors.red,
+                            child: Icon(Icons.delete,
+                                color: Colors.white, size: 20),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: _stopRecordingAndSend,
+                          child: const CircleAvatar(
+                            radius: 22,
+                            backgroundColor: Color(0xFF00A884),
+                            child: Icon(Icons.send,
+                                color: Colors.white, size: 20),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    GestureDetector(
+                      onTap: _ctrl.text.trim().isNotEmpty && !_sending
+                          ? _sendText
+                          : null,
+                      onLongPress: _ctrl.text.trim().isEmpty && !_sending
+                          ? _startRecording
+                          : null,
+                      child: Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          color: _sending
+                              ? Colors.grey[400]
+                              : const Color(0xFF00A884),
+                          shape: BoxShape.circle,
+                        ),
+                        child: _sending
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white),
+                              )
+                            : Icon(
+                                _ctrl.text.trim().isNotEmpty
+                                    ? Icons.send
+                                    : Icons.mic,
+                                color: Colors.white,
+                                size: 22,
+                              ),
+                      ),
+                    ),
                 ],
               ),
             ),
 
-          // Input bar
-          Container(
-            color: Colors.white,
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.attach_file,
-                      color: Color(0xFF00A884)),
-                  onPressed: _sending ? null : _showAttachMenu,
-                ),
-                Expanded(
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF0F2F5),
-                      borderRadius: BorderRadius.circular(24),
+            // ── Emoji Picker ──
+            if (_showEmoji)
+              SizedBox(
+                height: 280,
+                child: EmojiPicker(
+                  textEditingController: _ctrl,
+                  config: Config(
+                    emojiViewConfig: const EmojiViewConfig(
+                      columns: 8,
+                      emojiSizeMax: 28,
                     ),
-                    child: TextField(
-                      controller: _ctrl,
-                      onChanged: _onTextChanged,
-                      maxLines: 5,
-                      minLines: 1,
-                      style: const TextStyle(fontSize: 15),
-                      decoration: const InputDecoration(
-                        hintText: 'Message',
-                        border: InputBorder.none,
-                        hintStyle: TextStyle(color: Colors.grey),
-                      ),
+                    categoryViewConfig: const CategoryViewConfig(
+                      indicatorColor: Color(0xFF00A884),
+                      iconColorSelected: Color(0xFF00A884),
+                    ),
+                    bottomActionBarConfig: const BottomActionBarConfig(
+                      enabled: false,
                     ),
                   ),
+                  onEmojiSelected: (_, emoji) {
+                    _ctrl
+                      ..text += emoji.emoji
+                      ..selection = TextSelection.fromPosition(
+                        TextPosition(offset: _ctrl.text.length),
+                      );
+                    setState(() {});
+                  },
                 ),
-                const SizedBox(width: 6),
-                GestureDetector(
-                  onTap: _ctrl.text.trim().isNotEmpty && !_sending
-                      ? _sendText
-                      : null,
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: _ctrl.text.trim().isEmpty || _sending
-                          ? Colors.grey[400]
-                          : const Color(0xFF00A884),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      _ctrl.text.trim().isNotEmpty ? Icons.send : Icons.mic,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  Widget _dateSeparator(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDay = DateTime(dt.year, dt.month, dt.day);
+    String label;
+    if (msgDay == today) {
+      label = 'اليوم';
+    } else if (today.difference(msgDay).inDays == 1) {
+      label = 'أمس';
+    } else {
+      label = '${dt.day}/${dt.month}/${dt.year}';
+    }
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.grey[200],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(label,
+            style: TextStyle(color: Colors.grey[600], fontSize: 12)),
       ),
     );
   }

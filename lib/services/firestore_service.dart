@@ -304,4 +304,47 @@ class FirestoreService {
         .map((snap) =>
             snap.docs.map((doc) => {'id': doc.id, ...doc.data()}).toList());
   }
+
+  // ─── Additional helpers ───────────────────────────────────────────────────
+
+  /// Create a listen session with a known ID (host-generated)
+  static Future<void> createListenSessionById(
+      String sessionId, Map<String, dynamic> data) async {
+    await _db.collection('listen_sessions').doc(sessionId).set({
+      ...data,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Get a listen session by ID (one-shot read)
+  static Future<Map<String, dynamic>?> getListenSession(
+      String sessionId) async {
+    final doc =
+        await _db.collection('listen_sessions').doc(sessionId).get();
+    if (!doc.exists) return null;
+    return {'id': doc.id, ...doc.data()!};
+  }
+
+  /// Update session fields (updaterUid optional)
+  static Future<void> updateListenSessionData(
+      String sessionId, Map<String, dynamic> data) async {
+    await _db.collection('listen_sessions').doc(sessionId).update({
+      ...data,
+      'lastUpdatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// Alias: react to a message
+  static Future<void> reactToMessage(
+      String convId, String msgId, String myUid, String emoji) =>
+      addReaction(convId, msgId, myUid, emoji);
+
+  /// Online status stream for a user
+  static Stream<bool> onlineStream(String uid) {
+    return _db
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .map((doc) => (doc.data()?['isOnline'] as bool?) ?? false);
+  }
 }
