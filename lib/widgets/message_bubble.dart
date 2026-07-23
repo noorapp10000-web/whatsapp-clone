@@ -321,7 +321,7 @@ class MessageBubble extends StatelessWidget {
   Widget _buildAudioContent() {
     return AudioPlayerWidget(
       url: message.fileUrl ?? '',
-      color: isMe ? const Color(0xFF007B63) : const Color(0xFF00A884),
+      isMe: isMe,
     );
   }
 

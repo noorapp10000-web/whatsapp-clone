@@ -22,9 +22,9 @@ class CallService {
     });
 
     // Notify via WebSocket
-    WebSocketService.instance.sendCallSignal(
+    WebSocketService.sendCallSignal(
       callId: callDoc.id,
-      toUid: calleeUid,
+      targetUid: calleeUid,
       type: isVideo ? 'video' : 'voice',
       action: 'initiate',
     );
@@ -32,7 +32,7 @@ class CallService {
     // Send push notification
     try {
       await ApiService.sendPushNotification(
-        toUid: calleeUid,
+        targetUid: calleeUid,
         title: isVideo ? '📹 مكالمة فيديو واردة' : '📞 مكالمة واردة',
         body: 'يتصل بك ${FirebaseAuth.instance.currentUser?.displayName ?? 'شخص ما'}',
         data: {'callId': callDoc.id, 'type': isVideo ? 'video' : 'voice'},
@@ -55,9 +55,9 @@ class CallService {
       'status': 'active',
       'acceptedAt': FieldValue.serverTimestamp(),
     });
-    WebSocketService.instance.sendCallSignal(
+    WebSocketService.sendCallSignal(
       callId: callId,
-      toUid: callerUid,
+      targetUid: callerUid,
       type: 'accept',
       action: 'accept',
     );
@@ -68,9 +68,9 @@ class CallService {
       'status': 'rejected',
       'endedAt': FieldValue.serverTimestamp(),
     });
-    WebSocketService.instance.sendCallSignal(
+    WebSocketService.sendCallSignal(
       callId: callId,
-      toUid: callerUid,
+      targetUid: callerUid,
       type: 'reject',
       action: 'reject',
     );
@@ -79,4 +79,10 @@ class CallService {
   static Stream<DocumentSnapshot> callStream(String callId) {
     return FirebaseFirestore.instance.collection('calls').doc(callId).snapshots();
   }
+
+  // These hooks are kept as the call screen evolves toward full WebRTC state
+  // management. They provide a stable boundary for incoming signaling events.
+  static Future<void> handleCallAnswer(Map<String, dynamic> sdp) async {}
+
+  static Future<void> addIceCandidate(Map<String, dynamic> candidate) async {}
 }

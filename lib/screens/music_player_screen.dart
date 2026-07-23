@@ -4,11 +4,17 @@ class MusicPlayerScreen extends StatefulWidget {
   final String audioUrl;
   final String title;
   final String? senderName;
+  final String? sessionId;
+  final String? otherUid;
+  final bool isHost;
   const MusicPlayerScreen({
     super.key,
-    required this.audioUrl,
-    required this.title,
+    this.audioUrl = '',
+    this.title = 'استماع معاً',
     this.senderName,
+    this.sessionId,
+    this.otherUid,
+    this.isHost = false,
   });
 
   @override

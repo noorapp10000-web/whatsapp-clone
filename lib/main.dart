@@ -105,7 +105,7 @@ class ChatApp extends StatelessWidget {
           fontFamily: 'Roboto',
         ),
       ),
-      tabBarTheme: const TabBarTheme(
+      tabBarTheme: const TabBarThemeData(
         labelColor: Colors.white,
         unselectedLabelColor: Colors.white70,
         indicatorColor: Colors.white,
@@ -138,7 +138,7 @@ class ChatApp extends StatelessWidget {
         indent: 72,
       ),
       scaffoldBackgroundColor: const Color(0xFFF0F2F5),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         color: Colors.white,
@@ -171,7 +171,7 @@ class ChatApp extends StatelessWidget {
           fontFamily: 'Roboto',
         ),
       ),
-      tabBarTheme: const TabBarTheme(
+      tabBarTheme: const TabBarThemeData(
         labelColor: Color(0xFF00A884),
         unselectedLabelColor: Colors.grey,
         indicatorColor: Color(0xFF00A884),
@@ -180,7 +180,7 @@ class ChatApp extends StatelessWidget {
         backgroundColor: Color(0xFF00A884),
         foregroundColor: Colors.white,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         color: const Color(0xFF1F2C34),

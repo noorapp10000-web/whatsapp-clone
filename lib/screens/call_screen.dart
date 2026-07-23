@@ -9,6 +9,8 @@ class CallScreen extends StatefulWidget {
   final bool isVideo;
   final bool isIncoming;
   final String? callId;
+  final String? convId;
+  final Map<String, dynamic>? offerSdp;
   const CallScreen({
     super.key,
     required this.otherUid,
@@ -17,6 +19,8 @@ class CallScreen extends StatefulWidget {
     this.isVideo = false,
     this.isIncoming = false,
     this.callId,
+    this.convId,
+    this.offerSdp,
   });
 
   @override

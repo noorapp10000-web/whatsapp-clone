@@ -121,6 +121,26 @@ class WebSocketService {
   static void sendCallReject(String targetUid) =>
       send({'type': 'call_reject', 'targetUid': targetUid});
 
+  static void sendCallSignal({
+    required String callId,
+    required String targetUid,
+    required String type,
+    required String action,
+  }) {
+    final messageType = switch (action) {
+      'initiate' => 'call_offer',
+      'accept' => 'call_answer',
+      'reject' => 'call_reject',
+      _ => 'call_$action',
+    };
+    send({
+      'type': messageType,
+      'targetUid': targetUid,
+      'callId': callId,
+      'callType': type,
+    });
+  }
+
   static void sendToggleVideo(String targetUid, bool enabled) =>
       send({'type': 'call_toggle_video', 'targetUid': targetUid, 'enabled': enabled});
 
