@@ -136,18 +136,18 @@ jobs:
 
       - name: Locate and stage Debug APK
         run: |
-          echo "=== APK search ==="
-          find build/ -name "*.apk" 2>/dev/null | grep -v intermediates | grep -v desugar || true
-          # Flutter-apk copy task sometimes doesn't run with newer AGP — find wherever Gradle put it
+          echo "=== Full APK search (all locations) ==="
+          find . -name "*.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache" | grep -v intermediates | grep -v desugar || true
           DEST=build/app/outputs/flutter-apk/app-debug.apk
           if [ -f "$DEST" ]; then
             echo "✅ APK already at expected path"
           else
-            APK=$(find build/ -name "app-debug.apk" 2>/dev/null | grep -v intermediates | head -1)
+            # Search everywhere — Flutter/AGP may put the APK in android/app/build/ not build/app/
+            APK=$(find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache" | grep -v intermediates | head -1)
             if [ -z "$APK" ]; then
-              echo "❌ No app-debug.apk found anywhere under build/"
-              echo "=== Full build/ tree (apk files) ==="
-              find build/ -name "*.apk" 2>/dev/null
+              echo "❌ No app-debug.apk found anywhere!"
+              echo "=== All APKs ==="
+              find . -name "*.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache"
               exit 1
             fi
             echo "✅ Found APK at: $APK"
