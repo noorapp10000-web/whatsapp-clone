@@ -42,9 +42,8 @@ jobs:
 
       - name: Write google-services.json
         run: |
-          SECRET='${{ secrets.GOOGLE_SERVICES_JSON }}'
-          if [ -n "$SECRET" ] && [ "$SECRET" != "" ]; then
-            echo "$SECRET" > android/app/google-services.json
+          if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
             echo "✅ google-services.json written from secret"
           else
             echo "⚠️  GOOGLE_SERVICES_JSON secret not set — using committed google-services.json"
@@ -53,26 +52,35 @@ jobs:
               exit 1
             fi
           fi
-          echo "=== project_id ===" && cat android/app/google-services.json | grep project_id | head -1
+          test -s android/app/google-services.json
+          echo "✅ Firebase configuration is present"
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
 
       - name: Inject Backend URLs into Dart sources
         run: |
-          BACKEND='${{ secrets.BACKEND_URL }}'
-          BACKEND_WS='${{ secrets.BACKEND_WS_URL }}'
+          BACKEND="${BACKEND_URL:-https://wa-clone-976d4-production.up.railway.app}"
+          BACKEND_WS="${BACKEND_WS_URL:-wss://wa-clone-976d4-production.up.railway.app}"
           BACKEND="${BACKEND%/}"
           BACKEND_WS="${BACKEND_WS%/}"
-          if [ -n "$BACKEND" ]; then
-            sed -i "s|https://YOUR_REPLIT_BACKEND_URL|${BACKEND}|g" lib/services/api_service.dart
-            echo "✅ API URL → ${BACKEND}/api"
-          else
-            echo "⚠️  BACKEND_URL not set — using placeholder"
+          sed -i "s|https://YOUR_REPLIT_BACKEND_URL|${BACKEND}|g" lib/services/api_service.dart
+          sed -i "s|wss://YOUR_REPLIT_BACKEND_URL|${BACKEND_WS}|g" lib/services/websocket_service.dart
+          if grep -R "YOUR_REPLIT_BACKEND_URL" lib/services; then
+            echo "❌ A backend URL placeholder remains"
+            exit 1
           fi
-          if [ -n "$BACKEND_WS" ]; then
-            sed -i "s|wss://YOUR_REPLIT_BACKEND_URL|${BACKEND_WS}|g" lib/services/websocket_service.dart
-            echo "✅ WS  URL → ${BACKEND_WS}/ws"
-          else
-            echo "⚠️  BACKEND_WS_URL not set — using placeholder"
-          fi
+          echo "✅ API URL configured"
+          echo "✅ WebSocket URL configured"
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          BACKEND_WS_URL: ${{ secrets.BACKEND_WS_URL }}
+
+      - name: Verify backend health
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 \
+            https://wa-clone-976d4-production.up.railway.app/health
+          echo
+          echo "✅ Railway backend is healthy"
 
       - name: Write local.properties
         run: |
@@ -86,89 +94,30 @@ jobs:
       - name: Get Flutter dependencies
         run: flutter pub get
 
-      # ───────────────────────────────────────────────────────────────────────
-      # FlutterLifecycleAdapter was removed from Flutter 3.29+ but file_picker
-      # (all versions 8.x – 10.x) still references it.  Patch the cached
-      # source after `flutter pub get` so Gradle compiles cleanly.
-      # ───────────────────────────────────────────────────────────────────────
-      - name: Patch file_picker (fix FlutterLifecycleAdapter removed in Flutter 3.29+)
-        run: |
-          FILEPICKER_DIR=$(find "$HOME/.pub-cache/hosted/pub.dev" -maxdepth 1 -name "file_picker-*" 2>/dev/null | head -1)
-          if [ -z "$FILEPICKER_DIR" ]; then
-            echo "⚠️  file_picker not found in pub cache — skipping patch"
-            exit 0
-          fi
-          echo "📦 Found: $FILEPICKER_DIR"
-
-          # ── Kotlin source (file_picker 9.x+) ─────────────────────────────
-          KT_FILE="$FILEPICKER_DIR/android/src/main/kotlin/com/mr/flutter/plugin/filepicker/FilePickerPlugin.kt"
-          if [ -f "$KT_FILE" ]; then
-            # Remove the import line
-            sed -i '/import io\.flutter\.embedding\.engine\.plugins\.lifecycle\.FlutterLifecycleAdapter/d' "$KT_FILE"
-            # Replace usage: FlutterLifecycleAdapter.getActivityLifecycle(foo) → foo.lifecycle as? Lifecycle
-            # (cast required: getLifecycle() declared as Object in Java → Any in Kotlin, can't assign to Lifecycle? without cast)
-            sed -i 's/FlutterLifecycleAdapter\.getActivityLifecycle(\([^)]*\))/\1.lifecycle as? Lifecycle/g' "$KT_FILE"
-            echo "✅ Patched Kotlin source"
-            echo "=== Patched lifecycle lines ===" && grep -n "lifecycle" "$KT_FILE" | head -10
-          fi
-
-          # ── Java source (file_picker 8.x and below) ───────────────────────
-          JAVA_FILE="$FILEPICKER_DIR/android/src/main/java/com/mr/flutter/plugin/filepicker/FilePickerPlugin.java"
-          if [ -f "$JAVA_FILE" ]; then
-            sed -i '/import io\.flutter\.embedding\.engine\.plugins\.lifecycle\.FlutterLifecycleAdapter;/d' "$JAVA_FILE"
-            sed -i 's/FlutterLifecycleAdapter\.getActivityLifecycle(\([^)]*\))/\1.getLifecycle()/g' "$JAVA_FILE"
-            echo "✅ Patched Java source"
-          fi
-
-          if [ ! -f "$KT_FILE" ] && [ ! -f "$JAVA_FILE" ]; then
-            echo "ℹ️  No files matched — file_picker may have already fixed this issue"
-          fi
+      - name: Analyze Dart code
+        run: flutter analyze --no-fatal-infos
 
       - name: Build Debug APK
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          # Run flutter build — AGP 8.11.1 builds the APK successfully but Flutter's
-          # tool can't find it at the expected path due to an output-copy bug.
-          # We allow it to "fail" then locate the APK ourselves in the next step.
-          flutter build apk --debug --no-tree-shake-icons 2>&1 || true
+        run: flutter build apk --debug --no-tree-shake-icons
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
       - name: Locate and stage Debug APK
         run: |
-          echo "=== Full APK search (all locations) ==="
-          find . -name "*.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache" | grep -v intermediates | grep -v desugar || true
           DEST=build/app/outputs/flutter-apk/app-debug.apk
-          if [ -f "$DEST" ]; then
-            echo "✅ APK already at expected path"
-          else
-            # Search everywhere — Flutter/AGP may put the APK in android/app/build/ not build/app/
-            APK=$(find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache" | grep -v intermediates | head -1)
-            if [ -z "$APK" ]; then
-              echo "❌ No app-debug.apk found anywhere!"
-              echo "=== All APKs ==="
-              find . -name "*.apk" 2>/dev/null | grep -v node_modules | grep -v ".pub-cache"
-              exit 1
-            fi
-            echo "✅ Found APK at: $APK"
-            mkdir -p "$(dirname $DEST)"
-            cp "$APK" "$DEST"
-          fi
+          test -f "$DEST"
           ls -lh "$DEST"
 
       - name: Build Release APK
-        run: |
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          flutter build apk --release --no-tree-shake-icons 2>&1 || true
-          RELA=$(find build/ \( -name "app-release.apk" -o -name "app-release-unsigned.apk" \) 2>/dev/null | grep -v intermediates | head -1)
-          if [ -n "$RELA" ]; then
-            mkdir -p build/app/outputs/flutter-apk/
-            cp "$RELA" build/app/outputs/flutter-apk/app-release.apk
-            echo "✅ Release APK staged"
-          fi
+        run: flutter build apk --release --no-tree-shake-icons
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
-        continue-on-error: true
+
+      - name: Locate and stage Release APK
+        run: |
+          DEST=build/app/outputs/flutter-apk/app-release.apk
+          test -f "$DEST"
+          ls -lh "$DEST"
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
