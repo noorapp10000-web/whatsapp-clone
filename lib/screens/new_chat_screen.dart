@@ -19,9 +19,15 @@ class NewChatScreen extends StatefulWidget {
 class _NewChatScreenState extends State<NewChatScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tab;
-  final _ctrl = TextEditingController();
-  List<UserModel> _results = [];
-  bool _loading = false;
+
+  // Direct chat tab
+  final _searchCtrl = TextEditingController();
+  List<UserModel> _searchResults = [];
+  List<UserModel> _contacts = [];
+  bool _searchLoading = false;
+  bool _contactsLoading = true;
+
+  // Group tab
   final _selectedForGroup = <UserModel>[];
   final _groupNameCtrl = TextEditingController();
   final _groupDescCtrl = TextEditingController();
@@ -32,338 +38,628 @@ class _NewChatScreenState extends State<NewChatScreen>
   void initState() {
     super.initState();
     _tab = TabController(length: 2, vsync: this);
+    _loadContacts();
   }
 
   @override
   void dispose() {
     _tab.dispose();
-    _ctrl.dispose();
+    _searchCtrl.dispose();
     _groupNameCtrl.dispose();
     _groupDescCtrl.dispose();
     super.dispose();
   }
 
+  Future<void> _loadContacts() async {
+    setState(() => _contactsLoading = true);
+    try {
+      final res = await ApiService.getContacts();
+      final list = List<Map<String, dynamic>>.from(
+          (res['contacts'] as List?) ?? []);
+      if (mounted) {
+        setState(() {
+          _contacts = list.map((c) => UserModel.fromJson(c)).toList();
+          _contactsLoading = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _contactsLoading = false);
+    }
+  }
+
   Future<void> _search(String q) async {
     if (q.trim().length < 2) {
-      setState(() => _results = []);
+      setState(() => _searchResults = []);
       return;
     }
-    setState(() => _loading = true);
+    setState(() => _searchLoading = true);
     try {
-      final results = await FirestoreService.searchUsers(q, widget.myUid);
-      setState(() { _results = results; _loading = false; });
+      final results =
+          await FirestoreService.searchUsers(q, widget.myUid);
+      if (mounted) setState(() {
+        _searchResults = results;
+        _searchLoading = false;
+      });
     } catch (_) {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _searchLoading = false);
     }
   }
 
   Future<void> _openDirectChat(UserModel user) async {
-    setState(() => _loading = true);
-    try {
-      final conv = await FirestoreService.createDirectConversation(widget.myUid, user.id);
-      if (mounted) {
-        Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
-        ));
-      }
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+    final conv = await FirestoreService.createDirectConversation(
+        widget.myUid, user.id);
+    if (mounted) {
+      Navigator.pushReplacement(context, MaterialPageRoute(
+        builder: (_) =>
+            ChatScreen(conversation: conv, myUid: widget.myUid),
+      ));
     }
-    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _createGroup() async {
-    if (_groupNameCtrl.text.trim().isEmpty || _selectedForGroup.isEmpty) return;
+    if (_groupNameCtrl.text.trim().isEmpty ||
+        _selectedForGroup.isEmpty) return;
     setState(() => _creatingGroup = true);
     try {
       final conv = await FirestoreService.createGroupConversation(
         myUid: widget.myUid,
-        memberUids: _selectedForGroup.map((u) => u.id).toList(),
+        memberUids:
+            _selectedForGroup.map((u) => u.id).toList(),
         name: _groupNameCtrl.text.trim(),
         photoUrl: _groupPhotoUrl,
-        description: _groupDescCtrl.text.trim().isEmpty ? null : _groupDescCtrl.text.trim(),
+        description: _groupDescCtrl.text.trim().isEmpty
+            ? null
+            : _groupDescCtrl.text.trim(),
       );
       if (mounted) {
         Navigator.pushReplacement(context, MaterialPageRoute(
-          builder: (_) => ChatScreen(conversation: conv, myUid: widget.myUid),
+          builder: (_) =>
+              ChatScreen(conversation: conv, myUid: widget.myUid),
         ));
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('خطأ: $e')));
     }
     if (mounted) setState(() => _creatingGroup = false);
   }
 
   Future<void> _pickGroupPhoto() async {
-    final p = await ImagePicker().pickImage(source: ImageSource.gallery, imageQuality: 80);
+    final p = await ImagePicker()
+        .pickImage(source: ImageSource.gallery, imageQuality: 80);
     if (p == null) return;
     try {
       final bytes = await File(p.path).readAsBytes();
       final result = await ApiService.uploadFile(
-        base64: 'data:image/jpeg;base64,${base64Encode(bytes)}',
+        base64:
+            'data:image/jpeg;base64,${base64Encode(bytes)}',
         mimeType: 'image/jpeg',
-        fileName: 'group_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        fileName:
+            'group_${DateTime.now().millisecondsSinceEpoch}.jpg',
       );
-      setState(() => _groupPhotoUrl = result['url'] as String?);
+      if (mounted)
+        setState(() =>
+            _groupPhotoUrl = result['url'] as String?);
     } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark =
+        Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
       appBar: AppBar(
         title: const Text('محادثة جديدة'),
         bottom: TabBar(
           controller: _tab,
+          indicatorColor: const Color(0xFF00A884),
+          labelColor: const Color(0xFF00A884),
+          unselectedLabelColor: Colors.grey,
           tabs: const [
-            Tab(text: 'مباشرة'),
-            Tab(text: 'مجموعة'),
+            Tab(icon: Icon(Icons.person), text: 'مباشرة'),
+            Tab(icon: Icon(Icons.group), text: 'مجموعة'),
           ],
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white60,
-          indicatorColor: Colors.white,
         ),
       ),
       body: TabBarView(
         controller: _tab,
         children: [
-          // Direct chat tab
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: TextField(
-                  controller: _ctrl,
-                  onChanged: _search,
-                  decoration: InputDecoration(
-                    hintText: 'ابحث بالاسم أو البريد الإلكتروني...',
-                    prefixIcon: const Icon(Icons.search, color: Color(0xFF00A884)),
-                    suffixIcon: _ctrl.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () { _ctrl.clear(); setState(() => _results = []); })
-                        : null,
-                    filled: true,
-                    fillColor: Colors.grey.withOpacity(0.1),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
-                  ),
-                ),
-              ),
-              if (_loading)
-                const Center(child: CircularProgressIndicator(color: Color(0xFF00A884)))
-              else if (_results.isEmpty && _ctrl.text.length >= 2)
-                Expanded(
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.person_search, size: 64, color: Colors.grey[300]),
-                        const SizedBox(height: 12),
-                        Text('لا توجد نتائج', style: TextStyle(color: Colors.grey[500])),
-                      ],
-                    ),
-                  ),
-                )
-              else if (_results.isEmpty)
-                Expanded(
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.search, size: 64, color: Colors.grey[300]),
-                        const SizedBox(height: 12),
-                        Text('ابحث عن شخص للتواصل معه', style: TextStyle(color: Colors.grey[500])),
-                      ],
-                    ),
-                  ),
-                )
-              else
-                Expanded(
-                  child: ListView.separated(
-                    itemCount: _results.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
-                    itemBuilder: (ctx, i) {
-                      final u = _results[i];
-                      return ListTile(
-                        leading: CircleAvatar(
-                          radius: 24,
-                          backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
-                          backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
-                          child: u.photoUrl == null
-                              ? Text(u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
-                                  style: const TextStyle(color: Color(0xFF00A884), fontWeight: FontWeight.bold))
-                              : null,
-                        ),
-                        title: Text(u.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text(u.email, maxLines: 1, overflow: TextOverflow.ellipsis),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (u.isOnline)
-                              Container(
-                                width: 8,
-                                height: 8,
-                                margin: const EdgeInsets.only(right: 4),
-                                decoration: const BoxDecoration(color: Color(0xFF25D366), shape: BoxShape.circle),
-                              ),
-                            const Icon(Icons.chat_bubble_outline, color: Color(0xFF00A884), size: 20),
-                          ],
-                        ),
-                        onTap: () => _openDirectChat(u),
-                      );
-                    },
-                  ),
-                ),
-            ],
-          ),
+          _buildDirectTab(isDark),
+          _buildGroupTab(isDark),
+        ],
+      ),
+    );
+  }
 
-          // Group tab
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: TextField(
-                  controller: _ctrl,
-                  onChanged: _search,
-                  decoration: InputDecoration(
-                    hintText: 'ابحث عن أعضاء المجموعة...',
-                    prefixIcon: const Icon(Icons.search, color: Color(0xFF00A884)),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(25), borderSide: BorderSide.none),
-                    filled: true,
-                    fillColor: Colors.grey.withOpacity(0.1),
-                  ),
-                ),
+  // ─── Direct Chat Tab ────────────────────────────────────────────
+  Widget _buildDirectTab(bool isDark) {
+    final showSearch = _searchCtrl.text.trim().length >= 2;
+    final displayList =
+        showSearch ? _searchResults : _contacts;
+
+    return Column(
+      children: [
+        // Search bar
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (q) {
+              setState(() {});
+              _search(q);
+            },
+            decoration: InputDecoration(
+              hintText: 'ابحث عن شخص...',
+              prefixIcon: const Icon(Icons.search,
+                  color: Color(0xFF00A884)),
+              suffixIcon: _searchCtrl.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _searchResults = []);
+                      })
+                  : null,
+              filled: true,
+              fillColor: isDark
+                  ? Colors.grey[800]
+                  : Colors.grey[100],
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(30),
+                borderSide: BorderSide.none,
               ),
-              // Selected members chips
-              if (_selectedForGroup.isNotEmpty)
-                Container(
-                  height: 64,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: _selectedForGroup.map((u) => Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: Chip(
-                        avatar: CircleAvatar(
-                          backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
-                          backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
-                          child: u.photoUrl == null
-                              ? Text(u.displayName[0].toUpperCase(), style: const TextStyle(fontSize: 10))
-                              : null,
-                        ),
-                        label: Text(u.displayName, style: const TextStyle(fontSize: 12)),
-                        deleteIcon: const Icon(Icons.close, size: 16),
-                        onDeleted: () => setState(() => _selectedForGroup.remove(u)),
-                        backgroundColor: const Color(0xFF00A884).withOpacity(0.1),
-                      ),
-                    )).toList(),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 10),
+            ),
+          ),
+        ),
+
+        // Header
+        if (!showSearch) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Row(
+              children: [
+                Text(
+                  'جهات الاتصال (${_contacts.length})',
+                  style: TextStyle(
+                    color: const Color(0xFF00A884),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
                   ),
                 ),
-              Expanded(
-                child: _results.isEmpty
-                    ? Center(child: Text('ابحث عن أعضاء للإضافة', style: TextStyle(color: Colors.grey[500])))
-                    : ListView.separated(
-                        itemCount: _results.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
-                        itemBuilder: (ctx, i) {
-                          final u = _results[i];
-                          final selected = _selectedForGroup.contains(u);
-                          return ListTile(
-                            leading: CircleAvatar(
-                              radius: 24,
-                              backgroundColor: const Color(0xFF00A884).withOpacity(0.2),
-                              backgroundImage: u.photoUrl != null ? NetworkImage(u.photoUrl!) : null,
-                              child: u.photoUrl == null
-                                  ? Text(u.displayName.isNotEmpty ? u.displayName[0].toUpperCase() : '?',
-                                      style: const TextStyle(color: Color(0xFF00A884), fontWeight: FontWeight.bold))
-                                  : null,
-                            ),
-                            title: Text(u.displayName, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text(u.email),
-                            trailing: selected
-                                ? const Icon(Icons.check_circle, color: Color(0xFF00A884))
-                                : const Icon(Icons.circle_outlined, color: Colors.grey),
-                            onTap: () {
-                              setState(() {
-                                if (selected) _selectedForGroup.remove(u);
-                                else _selectedForGroup.add(u);
-                              });
-                            },
-                          );
-                        },
-                      ),
-              ),
-              if (_selectedForGroup.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    children: [
-                      // Group photo
-                      Row(
-                        children: [
-                          GestureDetector(
-                            onTap: _pickGroupPhoto,
-                            child: Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF00A884).withOpacity(0.1),
-                                shape: BoxShape.circle,
-                                border: Border.all(color: const Color(0xFF00A884).withOpacity(0.3)),
-                                image: _groupPhotoUrl != null
-                                    ? DecorationImage(image: NetworkImage(_groupPhotoUrl!), fit: BoxFit.cover)
-                                    : null,
-                              ),
-                              child: _groupPhotoUrl == null
-                                  ? const Icon(Icons.camera_alt, color: Color(0xFF00A884))
-                                  : null,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: _groupNameCtrl,
-                              decoration: const InputDecoration(
-                                hintText: 'اسم المجموعة *',
-                                prefixIcon: Icon(Icons.group, color: Color(0xFF00A884)),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: _groupDescCtrl,
-                        decoration: const InputDecoration(
-                          hintText: 'وصف المجموعة (اختياري)',
-                          prefixIcon: Icon(Icons.info_outline, color: Color(0xFF00A884)),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 50,
-                        child: ElevatedButton.icon(
-                          icon: _creatingGroup
-                              ? const SizedBox(width: 18, height: 18,
-                                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                              : const Icon(Icons.group_add),
-                          label: Text('إنشاء مجموعة (${_selectedForGroup.length} أعضاء)'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF00A884),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: _creatingGroup || _groupNameCtrl.text.trim().isEmpty ? null : _createGroup,
-                        ),
-                      ),
-                    ],
-                  ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.refresh,
+                      size: 18, color: Color(0xFF00A884)),
+                  onPressed: _loadContacts,
+                  tooltip: 'تحديث',
                 ),
-            ],
+              ],
+            ),
+          ),
+        ] else if (_searchLoading) ...[
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Center(
+              child: CircularProgressIndicator(
+                  color: Color(0xFF00A884)),
+            ),
+          ),
+        ],
+
+        // List
+        Expanded(
+          child: _contactsLoading && !showSearch
+              ? const Center(
+                  child: CircularProgressIndicator(
+                      color: Color(0xFF00A884)))
+              : displayList.isEmpty
+                  ? _emptyState(showSearch)
+                  : ListView.builder(
+                      itemCount: displayList.length,
+                      itemBuilder: (_, i) {
+                        final user = displayList[i];
+                        // In group tab, allow selection
+                        return _ContactTile(
+                          user: user,
+                          onTap: () => _openDirectChat(user),
+                        );
+                      },
+                    ),
+        ),
+      ],
+    );
+  }
+
+  Widget _emptyState(bool isSearch) {
+    if (isSearch) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.search_off,
+                size: 60, color: Colors.grey[300]),
+            const SizedBox(height: 12),
+            Text('لا توجد نتائج',
+                style: TextStyle(
+                    color: Colors.grey[500], fontSize: 15)),
+          ],
+        ),
+      );
+    }
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            width: 80,
+            height: 80,
+            decoration: BoxDecoration(
+              color: const Color(0xFF00A884).withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.people_outline,
+                size: 40, color: Color(0xFF00A884)),
+          ),
+          const SizedBox(height: 16),
+          const Text('لا توجد جهات اتصال بعد',
+              style: TextStyle(
+                  fontSize: 15, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          Text(
+            'ابحث عن أشخاص وأضفهم كجهات اتصال\nلتبدأ المحادثة معهم',
+            textAlign: TextAlign.center,
+            style:
+                TextStyle(color: Colors.grey[400], fontSize: 13),
           ),
         ],
       ),
+    );
+  }
+
+  // ─── Group Chat Tab ─────────────────────────────────────────────
+  Widget _buildGroupTab(bool isDark) {
+    final availableUsers = _contacts.isNotEmpty
+        ? _contacts
+        : _searchResults;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Group photo + name
+          Row(
+            children: [
+              GestureDetector(
+                onTap: _pickGroupPhoto,
+                child: Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00A884).withOpacity(0.1),
+                    shape: BoxShape.circle,
+                    image: _groupPhotoUrl != null
+                        ? DecorationImage(
+                            image: NetworkImage(_groupPhotoUrl!),
+                            fit: BoxFit.cover,
+                          )
+                        : null,
+                  ),
+                  child: _groupPhotoUrl == null
+                      ? const Icon(Icons.camera_alt,
+                          color: Color(0xFF00A884), size: 28)
+                      : null,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextField(
+                  controller: _groupNameCtrl,
+                  onChanged: (_) => setState(() {}),
+                  decoration: InputDecoration(
+                    hintText: 'اسم المجموعة *',
+                    prefixIcon: const Icon(Icons.group,
+                        color: Color(0xFF00A884)),
+                    border: OutlineInputBorder(
+                        borderRadius:
+                            BorderRadius.circular(12)),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                          color: Color(0xFF00A884), width: 2),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _groupDescCtrl,
+            decoration: InputDecoration(
+              hintText: 'وصف المجموعة (اختياري)',
+              prefixIcon: const Icon(Icons.info_outline,
+                  color: Color(0xFF00A884)),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(
+                    color: Color(0xFF00A884), width: 2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Selected members
+          if (_selectedForGroup.isNotEmpty) ...[
+            Text('الأعضاء المختارون (${_selectedForGroup.length})',
+                style: const TextStyle(
+                    color: Color(0xFF00A884),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 70,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: _selectedForGroup.length,
+                itemBuilder: (_, i) {
+                  final u = _selectedForGroup[i];
+                  return Padding(
+                    padding:
+                        const EdgeInsets.only(right: 8),
+                    child: Column(
+                      children: [
+                        Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 22,
+                              backgroundColor: const Color(
+                                      0xFF00A884)
+                                  .withOpacity(0.15),
+                              backgroundImage:
+                                  u.photoUrl != null
+                                      ? NetworkImage(
+                                          u.photoUrl!)
+                                      : null,
+                              child: u.photoUrl == null
+                                  ? Text(
+                                      u.displayName
+                                          .isNotEmpty
+                                          ? u.displayName[0]
+                                              .toUpperCase()
+                                          : '?',
+                                      style: const TextStyle(
+                                          color: Color(
+                                              0xFF00A884),
+                                          fontWeight:
+                                              FontWeight
+                                                  .bold))
+                                  : null,
+                            ),
+                            Positioned(
+                              right: -2,
+                              top: -2,
+                              child: GestureDetector(
+                                onTap: () => setState(() =>
+                                    _selectedForGroup
+                                        .remove(u)),
+                                child: Container(
+                                  width: 18,
+                                  height: 18,
+                                  decoration:
+                                      const BoxDecoration(
+                                    color: Colors.red,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                      Icons.close,
+                                      size: 12,
+                                      color: Colors.white),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          u.displayName.split(' ').first,
+                          style: const TextStyle(
+                              fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+
+          // Contacts to select
+          Text('اختر أعضاء المجموعة من جهات الاتصال:',
+              style: TextStyle(
+                  color: Colors.grey[600],
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500)),
+          const SizedBox(height: 8),
+          if (_contactsLoading)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(
+                    color: Color(0xFF00A884)),
+              ),
+            )
+          else if (_contacts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Center(
+                child: Text(
+                  'أضف أشخاص كجهات اتصال أولاً\nلتتمكن من إنشاء مجموعة معهم',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: Colors.grey[500], fontSize: 13),
+                ),
+              ),
+            )
+          else
+            ...availableUsers.map((user) {
+              final selected = _selectedForGroup
+                  .any((u) => u.id == user.id);
+              return CheckboxListTile(
+                value: selected,
+                onChanged: (v) {
+                  setState(() {
+                    if (v == true) {
+                      _selectedForGroup.add(user);
+                    } else {
+                      _selectedForGroup
+                          .removeWhere((u) => u.id == user.id);
+                    }
+                  });
+                },
+                activeColor: const Color(0xFF00A884),
+                secondary: CircleAvatar(
+                  backgroundColor:
+                      const Color(0xFF00A884).withOpacity(0.15),
+                  backgroundImage: user.photoUrl != null
+                      ? NetworkImage(user.photoUrl!)
+                      : null,
+                  child: user.photoUrl == null
+                      ? Text(
+                          user.displayName.isNotEmpty
+                              ? user.displayName[0]
+                                  .toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                              color: Color(0xFF00A884),
+                              fontWeight: FontWeight.bold))
+                      : null,
+                ),
+                title: Text(user.displayName,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600)),
+                subtitle: Text(
+                    user.status ?? user.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12)),
+              );
+            }),
+
+          const SizedBox(height: 24),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton.icon(
+              icon: _creatingGroup
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2))
+                  : const Icon(Icons.group_add),
+              label: Text(
+                  _creatingGroup
+                      ? 'جاري الإنشاء...'
+                      : 'إنشاء المجموعة (${_selectedForGroup.length} عضو)',
+                  style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _selectedForGroup.isEmpty ||
+                        _groupNameCtrl.text.trim().isEmpty
+                    ? Colors.grey
+                    : const Color(0xFF00A884),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              onPressed: _creatingGroup ||
+                      _selectedForGroup.isEmpty ||
+                      _groupNameCtrl.text.trim().isEmpty
+                  ? null
+                  : _createGroup,
+            ),
+          ),
+          const SizedBox(height: 32),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Contact Tile ─────────────────────────────────────────────────────────────
+class _ContactTile extends StatelessWidget {
+  final UserModel user;
+  final VoidCallback onTap;
+
+  const _ContactTile({required this.user, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: Stack(
+        children: [
+          CircleAvatar(
+            radius: 24,
+            backgroundColor:
+                const Color(0xFF00A884).withOpacity(0.15),
+            backgroundImage: user.photoUrl != null
+                ? NetworkImage(user.photoUrl!)
+                : null,
+            child: user.photoUrl == null
+                ? Text(
+                    user.displayName.isNotEmpty
+                        ? user.displayName[0].toUpperCase()
+                        : '?',
+                    style: const TextStyle(
+                        color: Color(0xFF00A884),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18))
+                : null,
+          ),
+          if (user.isOnline)
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366),
+                  shape: BoxShape.circle,
+                  border:
+                      Border.all(color: Colors.white, width: 2),
+                ),
+              ),
+            ),
+        ],
+      ),
+      title: Text(user.displayName,
+          style: const TextStyle(
+              fontWeight: FontWeight.w600, fontSize: 15)),
+      subtitle: Text(
+        user.isOnline
+            ? 'متصل الآن'
+            : (user.status ?? user.email),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: user.isOnline
+              ? const Color(0xFF25D366)
+              : Colors.grey[500],
+          fontSize: 13,
+        ),
+      ),
+      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
     );
   }
 }

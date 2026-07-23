@@ -481,7 +481,34 @@ class FirestoreService {
   }
 
   // ─── Status / Stories ─────────────────────────────────────────────────────
+  /// Create a status directly from a StatusModel
   static Future<void> createStatus(StatusModel status) async {
+    await _db.collection('statuses').doc(status.id).set(status.toJson());
+  }
+
+  /// Convenience wrapper — creates a StatusModel and saves it
+  static Future<void> createStatusFromParams({
+    required String uid,
+    required String userName,
+    String? userPhoto,
+    required String type,
+    String? content,
+    String? mediaUrl,
+    String? backgroundColor,
+  }) async {
+    final now = DateTime.now();
+    final status = StatusModel(
+      id: '${uid}_${now.millisecondsSinceEpoch}',
+      uid: uid,
+      userName: userName,
+      userPhoto: userPhoto,
+      type: type,
+      content: content,
+      mediaUrl: mediaUrl,
+      backgroundColor: backgroundColor,
+      createdAt: now,
+      expiresAt: now.add(const Duration(hours: 24)),
+    );
     await _db.collection('statuses').doc(status.id).set(status.toJson());
   }
 
@@ -517,6 +544,41 @@ class FirestoreService {
     await _db.collection('statuses').doc(statusId).update({
       'viewedBy': FieldValue.arrayUnion([viewerUid]),
     });
+  }
+
+  /// Alias for viewStatus (used by status_screen)
+  static Future<void> markStatusViewed(String statusId, String viewerUid) =>
+      viewStatus(statusId, viewerUid);
+
+  /// Get active statuses for a specific user (last 24h)
+  static Future<List<StatusModel>> getUserStatuses(String uid) async {
+    final cutoff = Timestamp.fromDate(
+        DateTime.now().subtract(const Duration(hours: 24)));
+    try {
+      final snap = await _db
+          .collection('statuses')
+          .where('uid', isEqualTo: uid)
+          .where('createdAt', isGreaterThan: cutoff)
+          .orderBy('createdAt', descending: false)
+          .get();
+      return snap.docs
+          .map((doc) =>
+              StatusModel.fromJson({'id': doc.id, ...doc.data()}))
+          .where((s) => !s.isExpired)
+          .toList();
+    } catch (_) {
+      // Fallback without ordering if index missing
+      final snap = await _db
+          .collection('statuses')
+          .where('uid', isEqualTo: uid)
+          .get();
+      return snap.docs
+          .map((doc) =>
+              StatusModel.fromJson({'id': doc.id, ...doc.data()}))
+          .where((s) => !s.isExpired)
+          .toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    }
   }
 
   static Future<void> deleteStatus(String statusId) async {

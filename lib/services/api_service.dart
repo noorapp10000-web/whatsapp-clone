@@ -14,32 +14,50 @@ class ApiService {
   }
 
   static Future<dynamic> _post(String path, Map<String, dynamic> body) async {
-    final r = await http.post(Uri.parse('$_base$path'),
-        headers: await _headers(), body: jsonEncode(body))
-        .timeout(const Duration(seconds: 30));
-    return jsonDecode(r.body);
+    try {
+      final r = await http
+          .post(Uri.parse('$_base$path'),
+              headers: await _headers(), body: jsonEncode(body))
+          .timeout(const Duration(seconds: 30));
+      final decoded = jsonDecode(r.body);
+      if (r.statusCode >= 400) {
+        throw Exception(decoded['error'] ?? 'HTTP ${r.statusCode}');
+      }
+      return decoded;
+    } catch (e) {
+      rethrow;
+    }
   }
 
   static Future<dynamic> _put(String path, Map<String, dynamic> body) async {
-    final r = await http.put(Uri.parse('$_base$path'),
-        headers: await _headers(), body: jsonEncode(body))
+    final r = await http
+        .put(Uri.parse('$_base$path'),
+            headers: await _headers(), body: jsonEncode(body))
         .timeout(const Duration(seconds: 30));
-    return jsonDecode(r.body);
+    final decoded = jsonDecode(r.body);
+    if (r.statusCode >= 400) throw Exception(decoded['error'] ?? 'HTTP ${r.statusCode}');
+    return decoded;
   }
 
   static Future<dynamic> _get(String path) async {
-    final r = await http.get(Uri.parse('$_base$path'), headers: await _headers())
+    final r = await http
+        .get(Uri.parse('$_base$path'), headers: await _headers())
         .timeout(const Duration(seconds: 30));
-    return jsonDecode(r.body);
+    final decoded = jsonDecode(r.body);
+    if (r.statusCode >= 400) throw Exception(decoded['error'] ?? 'HTTP ${r.statusCode}');
+    return decoded;
   }
 
   static Future<dynamic> _delete(String path) async {
-    final r = await http.delete(Uri.parse('$_base$path'), headers: await _headers())
+    final r = await http
+        .delete(Uri.parse('$_base$path'), headers: await _headers())
         .timeout(const Duration(seconds: 30));
-    return jsonDecode(r.body);
+    final decoded = jsonDecode(r.body);
+    if (r.statusCode >= 400) throw Exception(decoded['error'] ?? 'HTTP ${r.statusCode}');
+    return decoded;
   }
 
-  // ─── Auth ─────────────────────────────────────────────────────────────────
+  // ─── Auth ──────────────────────────────────────────────────────────────────
   static Future<dynamic> login({
     String? displayName,
     String? email,
@@ -55,7 +73,7 @@ class ApiService {
 
   static Future<dynamic> logout() => _post('/auth/logout', {});
 
-  // ─── Users ────────────────────────────────────────────────────────────────
+  // ─── Users ─────────────────────────────────────────────────────────────────
   static Future<dynamic> getMe() => _get('/users/me');
 
   static Future<dynamic> updateProfile({
@@ -73,11 +91,12 @@ class ApiService {
         if (phone != null) 'phone': phone,
       });
 
-  static Future<dynamic> searchUsers(String q) => _get('/users/search?q=${Uri.encodeComponent(q)}');
+  static Future<dynamic> searchUsers(String q) =>
+      _get('/users/search?q=${Uri.encodeComponent(q)}');
 
   static Future<dynamic> getUser(String uid) => _get('/users/$uid');
 
-  // ─── Upload ───────────────────────────────────────────────────────────────
+  // ─── Upload ────────────────────────────────────────────────────────────────
   static Future<Map<String, dynamic>> uploadFile({
     required String base64,
     required String mimeType,
@@ -91,7 +110,7 @@ class ApiService {
     return result as Map<String, dynamic>;
   }
 
-  // ─── FCM ──────────────────────────────────────────────────────────────────
+  // ─── FCM ───────────────────────────────────────────────────────────────────
   static Future<dynamic> sendPushNotification({
     required String targetUid,
     required String title,
@@ -105,10 +124,37 @@ class ApiService {
         if (data != null) 'data': data,
       });
 
-  // ─── Contacts ─────────────────────────────────────────────────────────────
+  // ─── Contacts ──────────────────────────────────────────────────────────────
+
+  /// Get all accepted contacts
   static Future<dynamic> getContacts() => _get('/contacts');
 
-  static Future<dynamic> addContact(String uid) => _post('/contacts', {'uid': uid});
+  /// Get pending incoming contact requests
+  static Future<dynamic> getContactRequests() => _get('/contacts/requests');
 
+  /// Check contact-request status with a specific user
+  /// Returns: { status: 'none'|'pending'|'accepted'|'rejected', direction: 'sent'|'received', requestId? }
+  static Future<Map<String, dynamic>> getContactStatus(String uid) async {
+    try {
+      final res = await _get('/contacts/status/$uid');
+      return Map<String, dynamic>.from(res as Map);
+    } catch (_) {
+      return {'status': 'none'};
+    }
+  }
+
+  /// Send a contact request to uid
+  static Future<dynamic> sendContactRequest(String uid) =>
+      _post('/contacts/request/$uid', {});
+
+  /// Accept a contact request from uid
+  static Future<dynamic> acceptContactRequest(String uid) =>
+      _post('/contacts/accept/$uid', {});
+
+  /// Reject a contact request from uid
+  static Future<dynamic> rejectContactRequest(String uid) =>
+      _post('/contacts/reject/$uid', {});
+
+  /// Remove a contact
   static Future<dynamic> removeContact(String uid) => _delete('/contacts/$uid');
 }

@@ -3,29 +3,76 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function isAuth() { return request.auth != null; }
     function isUser(uid) { return request.auth.uid == uid; }
+    function myUid() { return request.auth.uid; }
 
+    // ─── Users ──────────────────────────────────────────────────────────────
     match /users/{uid} {
       allow read: if isAuth();
       allow write: if isAuth() && isUser(uid);
     }
 
+    // ─── Contact Requests ────────────────────────────────────────────────────
+    match /contactRequests/{reqId} {
+      allow read: if isAuth() && (
+        resource.data.fromUid == myUid() || resource.data.toUid == myUid()
+      );
+      allow create: if isAuth() && request.resource.data.fromUid == myUid();
+      allow update: if isAuth() && (
+        resource.data.fromUid == myUid() || resource.data.toUid == myUid()
+      );
+      allow delete: if isAuth() && (
+        resource.data.fromUid == myUid() || resource.data.toUid == myUid()
+      );
+    }
+
+    // ─── Conversations ───────────────────────────────────────────────────────
     match /conversations/{convId} {
-      allow read:   if isAuth() && request.auth.uid in resource.data.participantIds;
-      allow create: if isAuth() && request.auth.uid in request.resource.data.participantIds;
-      allow update: if isAuth() && request.auth.uid in resource.data.participantIds;
+      allow read:   if isAuth() && myUid() in resource.data.participantIds;
+      allow create: if isAuth() && myUid() in request.resource.data.participantIds;
+      allow update: if isAuth() && myUid() in resource.data.participantIds;
       allow delete: if false;
 
       match /messages/{msgId} {
         allow read, write: if isAuth() &&
-          request.auth.uid in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds;
+          myUid() in get(/databases/$(database)/documents/conversations/$(convId)).data.participantIds;
       }
     }
 
+    // ─── Calls ───────────────────────────────────────────────────────────────
     match /calls/{callId} {
-      allow read:   if isAuth() && request.auth.uid in resource.data.participantIds;
-      allow create: if isAuth() && request.auth.uid in request.resource.data.participantIds;
-      allow update: if isAuth() && request.auth.uid in resource.data.participantIds;
+      allow read:   if isAuth() && myUid() in resource.data.participantIds;
+      allow create: if isAuth() && myUid() in request.resource.data.participantIds;
+      allow update: if isAuth() && myUid() in resource.data.participantIds;
       allow delete: if false;
+    }
+
+    // ─── Statuses ────────────────────────────────────────────────────────────
+    match /statuses/{statusId} {
+      allow read:  if isAuth();
+      allow create: if isAuth() && request.resource.data.uid == myUid();
+      allow update: if isAuth() && (
+        resource.data.uid == myUid() ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+      );
+      allow delete: if isAuth() && resource.data.uid == myUid();
+    }
+
+    // ─── Listen Sessions ─────────────────────────────────────────────────────
+    match /listenSessions/{sessionId} {
+      allow read, write: if isAuth();
+    }
+
+    // ─── User Settings ───────────────────────────────────────────────────────
+    match /userSettings/{uid} {
+      allow read, write: if isAuth() && isUser(uid);
+    }
+
+    // ─── Broadcasts ──────────────────────────────────────────────────────────
+    match /broadcasts/{broadcastId} {
+      allow read:   if isAuth() && resource.data.createdBy == myUid();
+      allow create: if isAuth() && request.resource.data.createdBy == myUid();
+      allow update: if isAuth() && resource.data.createdBy == myUid();
+      allow delete: if isAuth() && resource.data.createdBy == myUid();
     }
   }
 }
