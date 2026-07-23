@@ -34,10 +34,10 @@ jobs:
       - name: Flutter version info
         run: flutter --version
 
-      - name: Install NDK 27.0.12077973
+      - name: Install NDK 28.2.13676358
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          echo "y" | "$SDKMANAGER" "ndk;27.0.12077973"
+          echo "y" | "$SDKMANAGER" "ndk;28.2.13676358"
           echo "✅ NDK installed"
 
       - name: Write google-services.json

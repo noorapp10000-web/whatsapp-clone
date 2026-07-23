@@ -8,8 +8,8 @@ plugins {
 android {
     namespace "com.whatsappclone.app"
     compileSdk 36
-    // Pin NDK version required by flutter_webrtc native code
-    ndkVersion "27.0.12077973"
+    // NDK 28.2.13676358 required by jni package (28 is backward-compatible with 27)
+    ndkVersion "28.2.13676358"
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
