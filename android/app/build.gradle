@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace "com.whatsappclone.app"
-    compileSdk 36
+    compileSdk 35
     // NDK 28.2.13676358 required by jni package (28 is backward-compatible with 27)
     ndkVersion "28.2.13676358"
 
@@ -35,7 +35,7 @@ android {
     defaultConfig {
         applicationId "com.whatsappclone.app"
         minSdk 23
-        targetSdk 36
+        targetSdk 35
         versionCode flutter.versionCode
         versionName flutter.versionName
         multiDexEnabled true
