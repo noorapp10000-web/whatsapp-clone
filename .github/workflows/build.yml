@@ -34,11 +34,11 @@ jobs:
       - name: Flutter version info
         run: flutter --version
 
-      - name: Install NDK 28.2.13676358
+      - name: Install NDK and CMake
         run: |
           SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          echo "y" | "$SDKMANAGER" "ndk;28.2.13676358"
-          echo "✅ NDK installed"
+          echo "y" | "$SDKMANAGER" "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "✅ NDK and CMake installed"
 
       - name: Write google-services.json
         run: |
@@ -98,7 +98,7 @@ jobs:
         run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Build Debug APK
-        run: flutter build apk --debug --no-tree-shake-icons
+        run: flutter build apk --debug --no-tree-shake-icons --verbose
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
