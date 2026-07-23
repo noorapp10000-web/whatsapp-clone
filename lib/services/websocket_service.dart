@@ -4,8 +4,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'auth_service.dart';
 
 class WebSocketService {
-  // Replaced by CI/CD via BACKEND_WS_URL secret
-  static const String _wsBase = 'wss://YOUR_REPLIT_BACKEND_URL/ws';
+  // Railway backend — also injected by CI/CD via BACKEND_WS_URL secret
+  static const String _wsBase = 'wss://wa-clone-976d4-production.up.railway.app/ws';
 
   static WebSocketChannel? _channel;
   static bool _connected = false;

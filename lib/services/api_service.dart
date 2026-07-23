@@ -3,8 +3,8 @@ import 'package:http/http.dart' as http;
 import 'auth_service.dart';
 
 class ApiService {
-  // ⚠️ Replaced by CI/CD via BACKEND_URL secret
-  static const String _base = 'https://YOUR_REPLIT_BACKEND_URL/api';
+  // Railway backend — also injected by CI/CD via BACKEND_URL secret
+  static const String _base = 'https://wa-clone-976d4-production.up.railway.app/api';
 
   static Future<Map<String, String>> _headers() async {
     final token = await AuthService.getIdToken();
