@@ -124,18 +124,39 @@ jobs:
             echo "ℹ️  No files matched — file_picker may have already fixed this issue"
           fi
 
-      - name: Build Debug APK
+      - name: Build Debug APK (Gradle direct)
         run: |
-          set -o pipefail
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          flutter build apk --debug --no-tree-shake-icons --verbose 2>&1 | tail -100
+          cd android
+          ./gradlew assembleDebug
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
-      - name: Build Release APK
+      - name: Locate and stage Debug APK
+        run: |
+          echo "=== Searching for debug APKs ==="
+          find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules
+          APK=$(find . -name "app-debug.apk" 2>/dev/null | grep -v node_modules | head -1)
+          if [ -z "$APK" ]; then
+            echo "❌ No app-debug.apk found!"
+            exit 1
+          fi
+          echo "✅ Found: $APK"
+          mkdir -p build/app/outputs/flutter-apk/
+          cp "$APK" build/app/outputs/flutter-apk/app-debug.apk
+          ls -lh build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: Build Release APK (Gradle direct)
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          flutter build apk --release --no-tree-shake-icons
+          cd android
+          ./gradlew assembleRelease
+          RELA=$(find . -name "app-release-unsigned.apk" -o -name "app-release.apk" 2>/dev/null | grep -v node_modules | head -1)
+          if [ -n "$RELA" ]; then
+            mkdir -p build/app/outputs/flutter-apk/
+            cp "$RELA" build/app/outputs/flutter-apk/app-release.apk
+            echo "✅ Release APK staged"
+          fi
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
         continue-on-error: true
