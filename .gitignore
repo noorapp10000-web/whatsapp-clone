@@ -15,7 +15,9 @@ build/
 **/android/local.properties
 **/android/**/GeneratedPluginRegistrant.java
 **/android/key.properties
+# Keystores — but allow the committed debug keystore
 **/*.keystore
+!android/app/debug.keystore
 **/*.jks
 
 # Firebase config is committed intentionally (non-secret, needed for CI build)

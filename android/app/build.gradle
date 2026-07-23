@@ -22,6 +22,16 @@ android {
         jvmTarget = "11"
     }
 
+    signingConfigs {
+        debug {
+            // Use the committed debug.keystore so SHA-1 is consistent across all builds
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     defaultConfig {
         applicationId "com.whatsappclone.app"
         minSdk 23
@@ -33,6 +43,7 @@ android {
 
     buildTypes {
         debug {
+            signingConfig signingConfigs.debug
             shrinkResources false
             minifyEnabled false
         }
