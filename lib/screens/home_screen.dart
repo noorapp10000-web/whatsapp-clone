@@ -19,6 +19,7 @@ import 'starred_messages_screen.dart';
 import 'search_screen.dart';
 import 'music_player_screen.dart';
 import 'group_info_screen.dart';
+import 'contact_requests_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -40,6 +41,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // Filter tabs in chats
   String _chatFilter = 'all'; // all | unread | groups | archived
 
+  // Contact request badge
+  int _pendingRequests = 0;
+  StreamSubscription<int>? _requestsSub;
+
   @override
   void initState() {
     super.initState();
@@ -50,6 +55,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _myPhoto = user?.photoURL;
     _connectWs();
     _updateOnlineStatus(true);
+    _listenForContactRequests();
+  }
+
+  void _listenForContactRequests() {
+    if (_myUid.isEmpty) return;
+    _requestsSub = FirestoreService.pendingContactRequestsCountStream(_myUid)
+        .listen((count) {
+      if (mounted) setState(() => _pendingRequests = count);
+    });
   }
 
   Future<void> _connectWs() async {
@@ -140,6 +154,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     WebSocketService.off('call_offer', _handleIncomingCall);
     WebSocketService.off('lt_invite', _handleLTInvite);
     _updateOnlineStatus(false);
+    _requestsSub?.cancel();
     _tabController.dispose();
     _searchCtrl.dispose();
     super.dispose();
@@ -175,6 +190,37 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               icon: const Icon(Icons.search, color: Colors.white),
               onPressed: () => setState(() => _searching = true),
               tooltip: 'بحث',
+            ),
+            // Contact requests badge button
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.person_add_outlined, color: Colors.white),
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(
+                    builder: (_) => ContactRequestsScreen(myUid: _myUid),
+                  )),
+                  tooltip: 'طلبات الاتصال',
+                ),
+                if (_pendingRequests > 0)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      width: 18,
+                      height: 18,
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        _pendingRequests > 9 ? '9+' : '$_pendingRequests',
+                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+              ],
             ),
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert, color: Colors.white),

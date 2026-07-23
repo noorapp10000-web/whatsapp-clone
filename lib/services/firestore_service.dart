@@ -62,8 +62,23 @@ class FirestoreService {
     if (status != null) updates['status'] = status;
     if (photoUrl != null) updates['photoUrl'] = photoUrl;
     if (phone != null) updates['phone'] = phone;
-    if (privacySettings != null) updates['privacySettings'] = privacySettings;
+    // Merge individual privacy keys instead of replacing the whole map
+    if (privacySettings != null) {
+      privacySettings.forEach((k, v) {
+        updates['privacySettings.$k'] = v;
+      });
+    }
     await _db.collection('users').doc(uid).update(updates);
+  }
+
+  /// Stream pending incoming contact requests (used for badge count)
+  static Stream<int> pendingContactRequestsCountStream(String myUid) {
+    return _db
+        .collection('contactRequests')
+        .where('toUid', isEqualTo: myUid)
+        .where('status', isEqualTo: 'pending')
+        .snapshots()
+        .map((snap) => snap.docs.length);
   }
 
   // Block / Unblock

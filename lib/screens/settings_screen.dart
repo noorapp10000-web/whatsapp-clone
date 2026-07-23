@@ -32,6 +32,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
+    // Load local prefs first for immediate UI response
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _themeMode = prefs.getString('theme_mode') ?? 'system';
@@ -44,6 +45,32 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _readReceipts = prefs.getBool('read_receipts') ?? true;
       _fontSize = prefs.getString('font_size') ?? 'medium';
     });
+
+    // Then load authoritative privacy settings from Firestore
+    final uid = _user?.uid;
+    if (uid != null && uid.isNotEmpty) {
+      try {
+        final userDoc = await FirestoreService.getUser(uid);
+        if (userDoc != null && userDoc.privacySettings != null && mounted) {
+          final p = userDoc.privacySettings!;
+          final showLastSeen = p['showLastSeen'] as bool? ?? _showLastSeen;
+          final showProfilePhoto = p['showProfilePhoto'] as bool? ?? _showProfilePhoto;
+          final showStatus = p['showStatus'] as bool? ?? _showStatus;
+          final readReceipts = p['readReceipts'] as bool? ?? _readReceipts;
+          setState(() {
+            _showLastSeen = showLastSeen;
+            _showProfilePhoto = showProfilePhoto;
+            _showStatus = showStatus;
+            _readReceipts = readReceipts;
+          });
+          // Keep SharedPreferences in sync
+          await prefs.setBool('show_last_seen', showLastSeen);
+          await prefs.setBool('show_profile_photo', showProfilePhoto);
+          await prefs.setBool('show_status', showStatus);
+          await prefs.setBool('read_receipts', readReceipts);
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _savePref(String key, dynamic value) async {
@@ -157,7 +184,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) {
               setState(() => _showLastSeen = v);
               _savePref('show_last_seen', v);
-              FirestoreService.updateUserProfile(_user?.uid ?? '', privacySettings: {'showLastSeen': v});
+              FirestoreService.updateUserProfile(
+                _user?.uid ?? '',
+                privacySettings: {'showLastSeen': v},
+              );
             },
           ),
           _buildSwitchTile(
@@ -168,7 +198,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) {
               setState(() => _showProfilePhoto = v);
               _savePref('show_profile_photo', v);
-              FirestoreService.updateUserProfile(_user?.uid ?? '', privacySettings: {'showProfilePhoto': v});
+              FirestoreService.updateUserProfile(
+                _user?.uid ?? '',
+                privacySettings: {'showProfilePhoto': v},
+              );
             },
           ),
           _buildSwitchTile(
@@ -179,6 +212,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) {
               setState(() => _showStatus = v);
               _savePref('show_status', v);
+              FirestoreService.updateUserProfile(
+                _user?.uid ?? '',
+                privacySettings: {'showStatus': v},
+              );
             },
           ),
           _buildSwitchTile(
@@ -190,6 +227,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onChanged: (v) {
               setState(() => _readReceipts = v);
               _savePref('read_receipts', v);
+              FirestoreService.updateUserProfile(
+                _user?.uid ?? '',
+                privacySettings: {'readReceipts': v},
+              );
             },
           ),
 

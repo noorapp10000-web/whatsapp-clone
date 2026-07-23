@@ -145,6 +145,27 @@ router.post('/request/:uid', requireAuth, async (req, res) => {
       status: 'pending',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Send FCM push notification to target user
+    try {
+      const senderDoc = await db.collection('users').doc(myUid).get();
+      const senderName = senderDoc.exists ? (senderDoc.data().displayName || 'أحدهم') : 'أحدهم';
+      const targetDoc = await db.collection('users').doc(targetUid).get();
+      const fcmToken = targetDoc.exists ? targetDoc.data().fcmToken : null;
+      if (fcmToken) {
+        const { getMessaging } = require('../firebase');
+        await getMessaging().send({
+          token: fcmToken,
+          notification: {
+            title: 'طلب اتصال جديد',
+            body: `${senderName} يريد إضافتك كجهة اتصال`,
+          },
+          data: { type: 'contact_request', fromUid: myUid },
+          android: { priority: 'high', notification: { sound: 'default', channelId: 'whatsapp_clone_channel' } },
+        });
+      }
+    } catch (_) { /* FCM failure should not block the response */ }
+
     res.json({ success: true, requestId: ref.id });
   } catch (err) {
     res.status(500).json({ error: err.message });

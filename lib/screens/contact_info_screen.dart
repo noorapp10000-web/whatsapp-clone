@@ -127,7 +127,8 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
                       );
                     },
                   ),
-                  if (user.lastSeen != null) ...[
+                  // Respect user's privacy: only show last seen if they allow it
+                  if (user.showLastSeen && user.lastSeen != null) ...[
                     const Divider(height: 1, indent: 56),
                     _infoTile(
                       icon: Icons.access_time,
@@ -237,7 +238,8 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        user.photoUrl != null
+        // Respect privacy: only show photo if user allows it
+        user.showProfilePhoto && user.photoUrl != null
             ? Image.network(user.photoUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) =>
                 Container(color: const Color(0xFF00A884).withOpacity(0.2)))
             : Container(
@@ -283,13 +285,17 @@ class _ContactInfoScreenState extends State<ContactInfoScreen> {
                       width: 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: user.isOnline ? const Color(0xFF25D366) : Colors.grey,
+                        color: user.showLastSeen && user.isOnline
+                            ? const Color(0xFF25D366)
+                            : Colors.grey,
                         shape: BoxShape.circle,
                       ),
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      user.isOnline ? 'متصل الآن' : 'غير متصل',
+                      user.showLastSeen
+                          ? (user.isOnline ? 'متصل الآن' : 'غير متصل')
+                          : 'الحالة مخفية',
                       style: const TextStyle(color: Colors.white70, fontSize: 13),
                     ),
                   ],
