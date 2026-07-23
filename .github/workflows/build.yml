@@ -105,9 +105,11 @@ jobs:
           if [ -f "$KT_FILE" ]; then
             # Remove the import line
             sed -i '/import io\.flutter\.embedding\.engine\.plugins\.lifecycle\.FlutterLifecycleAdapter/d' "$KT_FILE"
-            # Replace usage: FlutterLifecycleAdapter.getActivityLifecycle(foo) → foo.lifecycle
-            sed -i 's/FlutterLifecycleAdapter\.getActivityLifecycle(\([^)]*\))/\1.lifecycle/g' "$KT_FILE"
+            # Replace usage: FlutterLifecycleAdapter.getActivityLifecycle(foo) → foo.lifecycle as? Lifecycle
+            # (cast required: getLifecycle() declared as Object in Java → Any in Kotlin, can't assign to Lifecycle? without cast)
+            sed -i 's/FlutterLifecycleAdapter\.getActivityLifecycle(\([^)]*\))/\1.lifecycle as? Lifecycle/g' "$KT_FILE"
             echo "✅ Patched Kotlin source"
+            echo "=== Patched lifecycle lines ===" && grep -n "lifecycle" "$KT_FILE" | head -10
           fi
 
           # ── Java source (file_picker 8.x and below) ───────────────────────
