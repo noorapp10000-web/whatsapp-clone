@@ -127,7 +127,7 @@ jobs:
       - name: Build Debug APK
         run: |
           export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/28.2.13676358"
-          flutter build apk --debug --no-tree-shake-icons
+          flutter build apk --debug --no-tree-shake-icons --verbose 2>&1 | tail -100
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.jvmargs=-Xmx4g"
 
