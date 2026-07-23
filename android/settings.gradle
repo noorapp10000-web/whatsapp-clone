@@ -35,7 +35,9 @@ if (pluginsDepsFile.exists()) {
         def pluginPath = plugin.path?.toString()
         if (pluginPath) {
             def androidDir = new File("${pluginPath}/android")
-            if (androidDir.exists() && new File("${androidDir}/build.gradle").exists()) {
+            def hasBuild = new File("${androidDir}/build.gradle").exists() ||
+                           new File("${androidDir}/build.gradle.kts").exists()
+            if (androidDir.exists() && hasBuild) {
                 def projectPath = ":${plugin.name}"
                 // Avoid duplicate registration (Flutter plugin may already include some)
                 if (!settings.findProject(projectPath)) {
