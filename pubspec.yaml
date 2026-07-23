@@ -37,7 +37,7 @@ dependencies:
   photo_view: ^0.15.0
 
   # Emoji
-  emoji_picker_flutter: ^2.2.0
+  emoji_picker_flutter: ^4.5.0
 
   # Storage & Utils
   sqflite: ^2.3.0
